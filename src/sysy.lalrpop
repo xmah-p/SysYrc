@@ -14,6 +14,14 @@ pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
 FuncDef: FuncDef = {
   <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
     FuncDef { <> }
+    // This is a macro provided by LALRPOP that automatically expands the names 
+    // of the captures in the rule into fields of the struct.
+    // Equivalent to:
+    // FuncDef {
+    //   func_type,
+    //   ident,
+    //   block,
+    // }
   }
 }
 

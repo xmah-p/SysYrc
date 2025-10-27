@@ -4,6 +4,7 @@ use std::fs::read_to_string;
 use std::io::Result;
 
 pub mod ast;
+pub mod front_end;
 
 lalrpop_mod!(sysy);
 
@@ -20,6 +21,8 @@ fn main() -> Result<()> {
 
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
 
-    println!("{:#?}", ast);
+    let program = front_end::translate_to_koopa(ast).unwrap();
+    front_end::emit_lr(&program, std::io::stdout())?;
+
     Ok(())
 }
