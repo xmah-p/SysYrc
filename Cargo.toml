@@ -1,13 +1,11 @@
 [package]
-name = "SysYrc"
+name = "compiler"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
-# The generated code depends on lalrpop-util.
+[build-dependencies]
+lalrpop = "0.22.2"
+
 [dependencies]
 lalrpop-util = { version = "0.22.2", features = ["lexer"] }
 koopa = "0.0.8"
-
-# Add a build-time dependency on the lalrpop library:
-[build-dependencies]
-lalrpop = "0.22.2"
