@@ -6,6 +6,7 @@ use crate::ast::{CompUnit, FuncDef, FuncType, Block, Stmt};
 match {
   r"\s*" => {},                // Ignore whitespace
   r"//[^\n\r]*[\n\r]*" => {},  // Ignore single-line comments
+  r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => {}, // Ignore multi-line comments
   _                            // Default case: convert to token and pass to parser
 }
 

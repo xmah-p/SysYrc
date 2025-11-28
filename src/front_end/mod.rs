@@ -8,7 +8,7 @@ use koopa::{
 
 use koopa::back::KoopaGenerator;
 
-use crate::ast::{FuncDef, FuncType};
+use crate::ast::{FuncType};
 
 // Koopa IR 中, 最大的单位是 Program, 它由若干全局变量 Value 和 函数 Function 构成.
 // Function 由基本块 Basic Block 构成.
@@ -87,7 +87,7 @@ pub fn translate_to_koopa(cu: crate::ast::CompUnit) -> Result<Program, Error> {
     let func_type = func_def.func_type;
     let name = func_def.identifier;
     let block = func_def.block;
-    
+
     let stmt = block.stmt;
     let num = stmt.num;
 
@@ -99,13 +99,13 @@ pub fn translate_to_koopa(cu: crate::ast::CompUnit) -> Result<Program, Error> {
     let func = prog.new_func(func_data);
 
     let func = prog.func_mut(func);
-    let entry = new_bb!(func).basic_block(Some("%entry".into()));
-    add_bb!(func, entry);
+    let entry_bb = new_bb!(func).basic_block(Some("%entry".into()));
+    add_bb!(func, entry_bb);
 
     let num = new_value!(func).integer(num);
 
     let ret = new_value!(func).ret(Some(num));
-    add_inst!(func, entry, ret);
+    add_inst!(func, entry_bb, ret);
     Ok(prog)
 }
 
