@@ -10,30 +10,65 @@ use koopa::back::KoopaGenerator;
 
 use crate::ast::{FuncDef, FuncType};
 
-// 我们应该生成一个 Koopa IR 程序.
-// 程序中有一个名字叫 main 的函数.
-// 函数里有一个入口基本块.
-// 基本块里有一条返回指令.
-// 返回指令的返回值就是 SysY 里 return 语句后跟的值, 也就是一个整数常量.
+// Koopa IR 中, 最大的单位是 Program, 它由若干全局变量 Value 和 函数 Function 构成.
+// Function 由基本块 Basic Block 构成.
+// 基本块中是一系列指令, 指令也是 Value.
+// - Program
+//     - Value 1
+//     - Value 2
+//     - ...
+//     - Function 1
+//         - Basic Block 1
+//             - Value 1
+//             - Value 2
+//             - ...
+//         - Basic Block 2
+//         - ...
+//     - Function 2
+//     - ...
 
+// 基本块是一系列指令的集合, 它只有一个入口点且只有一个出口点. 
+// 即, 跳转的目标只能是基本块的开头, 且只有最后一条指令能进行控制流的转移
+
+// Value 的种类有：Integer, ZeroInit, Undef, Aggregate, FuncArgRef, 
+// BlockArgRef, Alloc, GlobalAlloc, Load, Store, GetPtr, GetElemPtr, 
+// Binary, Branch, Jump, Call, Return
+
+// Function, Basic Block, Value 的名字必须以 @ 或者 % 开头. 
+// 前者表示这是一个 "具名符号", 后者表示这是一个 "临时符号".
+
+// FunctionData includes a DFG and a Layout
+// DFG (DataFlowGraph) holds all data of values (ValueData) and basic
+// blocks (BasicBlockData), and maintains their use-define and
+// define-use chain.
+// Layout maintains the order of instructions (Value) and basic blocks 
+// in a function.
+
+// Creates a new basic block in the DFG of func
+// Returns a BlockBuilder for the newly created basic block
 macro_rules! new_bb {
     ($func:expr) => {
         $func.dfg_mut().new_bb()
     };
 }
 
+// Create a new value in the DFG of func
+// Returns a ValueBuilder for the newly created value
 macro_rules! new_value {
     ($func:expr) => {
         $func.dfg_mut().new_value()
     };
 }
 
+// Pushes basic block bb to the end of the basic block list (bbs) of func
 macro_rules! add_bb {
     ($func:expr, $bb:expr) => {
         $func.layout_mut().bbs_mut().push_key_back($bb).unwrap()
     };
 }
 
+// Pushes instruction inst to the end of the instruction list (insts) 
+// of basic block bb
 macro_rules! add_inst {
     ($func:expr, $bb:expr, $inst:expr) => {
         $func
@@ -50,8 +85,9 @@ pub fn translate_to_koopa(cu: crate::ast::CompUnit) -> Result<Program, Error> {
     let func_def = cu.func_def;
 
     let func_type = func_def.func_type;
-    let name = func_def.ident;
+    let name = func_def.identifier;
     let block = func_def.block;
+    
     let stmt = block.stmt;
     let num = stmt.num;
 

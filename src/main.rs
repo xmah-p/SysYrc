@@ -8,21 +8,26 @@ pub mod front_end;
 
 lalrpop_mod!(sysy);
 
-fn main() -> Result<()> {
-    // sysyrc <mode> <input> -o <output>
+// cmdline example: sysyrc <mode> <input> -o <output>
+fn parse_cmdline() -> (String, String, String) {
     let mut args = args();
     args.next();
     let mode = args.next().unwrap();
     let input = args.next().unwrap();
     args.next();
     let output = args.next().unwrap();
+    (mode, input, output)
+}
+
+fn main() -> Result<()> {
+    let (mode, input, output) = parse_cmdline();
 
     let input = read_to_string(input)?;
 
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
 
     let program = front_end::translate_to_koopa(ast).unwrap();
-    front_end::emit_lr(&program, std::io::stdout())?;
+    front_end::emit_lr(&program, std::fs::File::create(output)?)?;
 
     Ok(())
 }

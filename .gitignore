@@ -1,3 +1,4 @@
 /target
-*.c
+hello.c
+hello.s
 bfc

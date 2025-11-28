@@ -8,7 +8,7 @@ pub struct CompUnit {
 #[derive(Debug)]
 pub struct FuncDef {
     pub func_type: FuncType,
-    pub ident: String,
+    pub identifier: String,
     pub block: Block,
 }
 
@@ -16,6 +16,7 @@ pub struct FuncDef {
 pub enum FuncType {
     Int,
 }
+
 #[derive(Debug)]
 pub struct Block {
     pub stmt: Stmt,

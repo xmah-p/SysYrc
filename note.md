@@ -1,13 +1,12 @@
 # 编译原理实践：SysYrc
 
 ```bash
+# 使用双斜杠 // 开头可以告诉 Shell：“这是一个绝对路径，请不要把它转换成 Windows 路径”
+docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/compiler-dev autotest -koopa -s lv1 //root/compiler
+
+
 # 启动 docker 容器，挂载项目目录到容器内
-docker run -it --rm -v "D:/wksp/compilers/SysYrc":/root/compiler maxxing/compiler-dev bash
-
-
-docker run -it --rm -v "/mnt/d/wksp/compilers/SysYrc":"/root/compiler" maxxing/compiler-dev autotest -koopa -s lv1 /root/compiler
-
-docker run -it --rm -v "/mnt/d/wksp/compilers/NaiveCC":"/root/compiler" maxxing/compiler-dev bash
+docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/compiler-dev bash
 autotest -koopa -s lv1 /root/compiler
 
 cargo run -- -koopa hello.c -o hello.s
