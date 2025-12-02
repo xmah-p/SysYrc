@@ -5,10 +5,14 @@ use std::io::Result;
 
 pub mod ast;
 pub mod front_end;
+pub mod back_end;
 
 lalrpop_mod!(sysy);  
 
-// cmdline example: sysyrc <mode> <input> -o <output>
+
+
+// Cmdline example: sysyrc <mode> <input> -o <output>
+// No error handling yet for simplicity
 fn parse_cmdline() -> (String, String, String) {
     let mut args = args();
     args.next();
@@ -20,8 +24,10 @@ fn parse_cmdline() -> (String, String, String) {
 }
 
 fn main() -> Result<()> {
-    // 假设 parse_cmdline 返回 (String, String, String)
     let (mode, input, output) = parse_cmdline();
+
+    let output = std::fs::File::create(output)?;
+    let writer = std::io::BufWriter::new(output);
 
     let input: String = read_to_string(input)?;
 
@@ -35,12 +41,13 @@ fn main() -> Result<()> {
         panic!("Failed to translate to Koopa IR");
     };
 
+
     match mode.as_str() {
         "-koopa" => {
-            front_end::emit_lr(&koopa_ir, std::fs::File::create(output)?)?;
+            front_end::emit_ir(&koopa_ir, writer)?;
         }
         "-riscv" => {
-            
+            back_end::emit_riscv(&koopa_ir, writer)?;
         }
         "-perf" => {
             panic!("Perf backend not implemented yet");
