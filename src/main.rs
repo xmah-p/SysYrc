@@ -9,8 +9,6 @@ pub mod back_end;
 
 lalrpop_mod!(sysy);  
 
-
-
 // Cmdline example: sysyrc <mode> <input> -o <output>
 // No error handling yet for simplicity
 fn parse_cmdline() -> (String, String, String) {

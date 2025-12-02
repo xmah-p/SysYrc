@@ -8,7 +8,7 @@ use koopa::{
 
 use koopa::back::KoopaGenerator;
 
-use crate::ast::{FuncType};
+use crate::ast::{Expr, FuncType};
 
 // Creates a new basic block in the DFG of func
 // Returns a BlockBuilder for the newly created basic block
@@ -55,7 +55,11 @@ pub fn translate_to_koopa(cu: crate::ast::CompUnit) -> Result<Program, Error> {
     let block = func_def.block;
 
     let stmt = block.stmt;
-    let num = stmt.num;
+    let expr = stmt.expr;
+    let num = match expr {
+        Expr::Number(n) => n,
+        _ => panic!("Only number expressions are supported in this simplified example"),
+    };
 
     let func_data_type = match func_type {
         FuncType::Int => Type::get_i32(),

@@ -24,5 +24,43 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct Stmt {
-    pub num: i32,
+    pub expr: Expr,
+}
+
+#[derive(Debug)]
+pub enum Expr {
+    Binary {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+    Number(i32),
+}
+
+#[derive(Debug)]
+pub enum BinaryOp {
+    Or,
+    And,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Leq,
+    Geq,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
+
+#[derive(Debug)]
+pub enum UnaryOp {
+    Pos,
+    Neg,
+    Not,
 }

@@ -1,13 +1,35 @@
 grammar;
 
-use crate::ast::{CompUnit, FuncDef, FuncType, Block, Stmt};
+use crate::ast::{CompUnit, FuncDef, FuncType, Block, Stmt, Expr, UnaryOp, BinaryOp};
+
+// grammar rules:
+// CompUnit    ::= FuncDef;
+// 
+// FuncDef     ::= FuncType IDENT "(" ")" Block;
+// FuncType    ::= "int";
+// 
+// Block       ::= "{" Stmt "}";
+// Stmt        ::= "return" Exp ";";
+// 
+// Exp         ::= LOrExp;
+// PrimaryExp  ::= "(" Exp ")" | Number;
+// Number      ::= INT_CONST;
+// UnaryExp    ::= PrimaryExp | UnaryOp UnaryExp;
+// UnaryOp     ::= "+" | "-" | "!";
+// MulExp      ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
+// AddExp      ::= MulExp | AddExp ("+" | "-") MulExp;
+// RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
+// EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
+// LAndExp     ::= EqExp | LAndExp "&&" EqExp;
+// LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
+
 
 // lexer rules
 match {
-  r"\s*" => {},                // Ignore whitespace
-  r"//[^\n\r]*[\n\r]*" => {},  // Ignore single-line comments
-  r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => {}, // Ignore multi-line comments
-  _                            // Default case: convert to token and pass to parser
+    r"\s*" => {},                // Ignore whitespace
+    r"//[^\n\r]*[\n\r]*" => {},  // Ignore single-line comments
+    r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => {}, // Ignore multi-line comments
+    _                            // Default case: convert to token and pass to parser
 }
 
 pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
@@ -25,12 +47,137 @@ FuncDef: FuncDef = {
     // }
   }
 }
-
 FuncType: FuncType = "int" => FuncType::Int;
 
 Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
+Stmt: Stmt = "return" <expr: Expr> ";" => Stmt { <> };
 
-Stmt: Stmt = "return" <num: Number> ";" => Stmt { <> };
+
+Expr: Expr = LOrExpr;
+
+LOrExpr: Expr = {
+    <lhs: LOrExpr> "||" <rhs: LAndExpr> => Expr::Binary {
+        op: BinaryOp::Or,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    LAndExpr,
+};
+
+LAndExpr: Expr = {
+    <lhs: LAndExpr> "&&" <rhs: EqExpr> => Expr::Binary {
+        op: BinaryOp::And,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    EqExpr,
+};
+
+EqExpr: Expr = {
+    <lhs: EqExpr> "==" <rhs: RelExpr> => Expr::Binary {
+        op: BinaryOp::Eq,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: EqExpr> "!=" <rhs: RelExpr> => Expr::Binary {
+        op: BinaryOp::Neq,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    RelExpr,
+};
+
+RelExpr: Expr = {
+    <lhs: RelExpr> "<" <rhs: AddExpr> => Expr::Binary {
+        op: BinaryOp::Lt,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: RelExpr> ">" <rhs: AddExpr> => Expr::Binary {
+        op: BinaryOp::Gt,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: RelExpr> "<=" <rhs: AddExpr> => Expr::Binary {
+        op: BinaryOp::Leq,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: RelExpr> ">=" <rhs: AddExpr> => Expr::Binary {
+        op: BinaryOp::Geq,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    AddExpr,
+};
+
+AddExpr: Expr = {
+    <lhs: AddExpr> "+" <rhs: MulExpr> => Expr::Binary {
+        op: BinaryOp::Add,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: AddExpr> "-" <rhs: MulExpr> => Expr::Binary {
+        op: BinaryOp::Sub,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    MulExpr,
+};
+
+MulExpr: Expr = {
+    <lhs: MulExpr> "*" <rhs: UnaryExpr> => Expr::Binary {
+        op: BinaryOp::Mul,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: MulExpr> "/" <rhs: UnaryExpr> => Expr::Binary {
+        op: BinaryOp::Div,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    <lhs: MulExpr> "%" <rhs: UnaryExpr> => Expr::Binary {
+        op: BinaryOp::Mod,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    },
+    UnaryExpr,
+};
+
+UnaryExpr: Expr = {
+    <op: UnaryOp> <expr: UnaryExpr> => Expr::Unary {
+        op: op,
+        expr: Box::new(expr),
+    },
+    PrimaryExpr,
+};
+
+PrimaryExpr: Expr = {
+    "(" <Expr> ")", // 括号直接剥离，不需要在 AST 中保留节点
+    <num:Number> => Expr::Number(num),
+}
+
+UnaryOp: UnaryOp = {
+    r"\+" => UnaryOp::Pos,
+    r"-" => UnaryOp::Neg,
+    r"!" => UnaryOp::Not,
+};
+
+BinaryOp: BinaryOp = {
+    "||" => BinaryOp::Or,
+    "&&" => BinaryOp::And,
+    "==" => BinaryOp::Eq,
+    "!=" => BinaryOp::Neq,
+    "<"  => BinaryOp::Lt,
+    ">"  => BinaryOp::Gt,
+    "<=" => BinaryOp::Leq,
+    ">=" => BinaryOp::Geq,
+    "+"  => BinaryOp::Add,
+    "-"  => BinaryOp::Sub,
+    "*"  => BinaryOp::Mul,
+    "/"  => BinaryOp::Div,
+    "%"  => BinaryOp::Mod,
+};
 
 Number: i32 = <num: IntConst> => <>;
 
@@ -39,7 +186,7 @@ Number: i32 = <num: IntConst> => <>;
 Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
 
 IntConst: i32 = {
-  r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),                // decimal
-  r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),                     // octal
-  r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),    // hexadecimal
+    r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),                // decimal
+    r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),                     // octal
+    r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),    // hexadecimal
 }
