@@ -41,7 +41,7 @@ pub enum Expr {
     Number(i32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum BinaryOp {
     Or,
     And,
@@ -58,7 +58,7 @@ pub enum BinaryOp {
     Mod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum UnaryOp {
     Pos,
     Neg,

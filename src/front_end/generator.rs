@@ -1,11 +1,8 @@
 use super::context::KoopaContext;
 
-use koopa::ir::{
-    builder_traits::*,
-    FunctionData, Value, Type, BasicBlock
-};
-
 use crate::ast::*;
+use koopa::ir::values::BinaryOp as KoopaBinaryOp;
+use koopa::ir::{builder_traits::*, BasicBlock, FunctionData, Type, Value};
 
 /// Trait for generating Koopa IR entities
 pub trait GenerateKoopa {
@@ -47,35 +44,88 @@ impl GenerateKoopa for Block {
 impl GenerateKoopa for Stmt {
     fn generate(&self, context: &mut KoopaContext) -> () {
         let expr = &self.expr;
-        let value: i32 = compute_expr(expr);
-        let value: Value = context.new_value().integer(value);
+        let value: Value = expr.generate(context);
         let inst: Value = context.new_value().ret(Some(value));
         context.add_inst(inst);
     }
 }
 
-fn compute_expr(expr: &Expr) -> i32 {
-    match expr {
-        Expr::Number(n) => *n,
-        Expr::Binary { op, lhs, rhs } => match op {
-            BinaryOp::Add => compute_expr(lhs) + compute_expr(rhs),
-            BinaryOp::Div => compute_expr(lhs) / compute_expr(rhs),
-            BinaryOp::Eq => (compute_expr(lhs) == compute_expr(rhs)) as i32,
-            BinaryOp::Geq => (compute_expr(lhs) >= compute_expr(rhs)) as i32,
-            BinaryOp::Gt => (compute_expr(lhs) > compute_expr(rhs)) as i32,
-            BinaryOp::Leq => (compute_expr(lhs) <= compute_expr(rhs)) as i32,
-            BinaryOp::And => (compute_expr(lhs) != 0 && compute_expr(rhs) != 0) as i32,
-            BinaryOp::Lt => (compute_expr(lhs) < compute_expr(rhs)) as i32,
-            BinaryOp::Mod => compute_expr(lhs) % compute_expr(rhs),
-            BinaryOp::Mul => compute_expr(lhs) * compute_expr(rhs),
-            BinaryOp::Neq => (compute_expr(lhs) != compute_expr(rhs)) as i32,
-            BinaryOp::Or => (compute_expr(lhs) != 0 || compute_expr(rhs) != 0) as i32,
-            BinaryOp::Sub => compute_expr(lhs) - compute_expr(rhs),
-        },
-        Expr::Unary { op, expr } => match op {
-            UnaryOp::Neg => -compute_expr(expr),
-            UnaryOp::Not => (compute_expr(expr) == 0) as i32,
-            UnaryOp::Pos => compute_expr(expr),
+impl Expr {
+    fn generate(&self, context: &mut KoopaContext) -> Value {
+        match self {
+            Expr::Number(n) => {
+                let value = context.new_value().integer(*n);
+                value
+            }
+            Expr::Binary { op, lhs, rhs } => {
+                let lhs_value = lhs.generate(context);
+                let rhs_value = rhs.generate(context);
+
+                if let Some(koopa_op) = map_binary_op(*op) {
+                    let inst = context.new_value().binary(koopa_op, lhs_value, rhs_value);
+                    context.add_inst(inst);
+
+                    inst
+                } else {
+                    // Handles logical and/or
+                    let zero = context.new_value().integer(0);
+
+                    let lhs_bool = context
+                        .new_value()
+                        .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
+                    context.add_inst(lhs_bool);
+
+                    let rhs_bool = context
+                        .new_value()
+                        .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
+                    context.add_inst(rhs_bool);
+
+                    let logic_op = match op {
+                        BinaryOp::And => KoopaBinaryOp::And,
+                        BinaryOp::Or => KoopaBinaryOp::Or,
+                        _ => unreachable!("Already handled by map_binary_op"),
+                    };
+
+                    let inst = context.new_value().binary(logic_op, lhs_bool, rhs_bool);
+                    context.add_inst(inst);
+                    inst
+                }
+            }
+            Expr::Unary { op, expr } => match op {
+                UnaryOp::Pos => expr.generate(context),
+                UnaryOp::Neg => {
+                    let value = expr.generate(context);
+                    let zero = context.new_value().integer(0);
+                    let inst = context.new_value().binary(KoopaBinaryOp::Sub, zero, value);
+                    context.add_inst(inst);
+                    inst
+                }
+                UnaryOp::Not => {
+                    let value = expr.generate(context);
+                    let zero = context.new_value().integer(0);
+                    let inst = context.new_value().binary(KoopaBinaryOp::Eq, value, zero);
+                    context.add_inst(inst);
+                    inst
+                }
+            },
         }
+    }
+}
+
+fn map_binary_op(op: BinaryOp) -> Option<KoopaBinaryOp> {
+    match op {
+        BinaryOp::Add => Some(KoopaBinaryOp::Add),
+        BinaryOp::Sub => Some(KoopaBinaryOp::Sub),
+        BinaryOp::Mul => Some(KoopaBinaryOp::Mul),
+        BinaryOp::Div => Some(KoopaBinaryOp::Div),
+        BinaryOp::Mod => Some(KoopaBinaryOp::Mod),
+        BinaryOp::Eq => Some(KoopaBinaryOp::Eq),
+        BinaryOp::Neq => Some(KoopaBinaryOp::NotEq),
+        BinaryOp::Lt => Some(KoopaBinaryOp::Lt),
+        BinaryOp::Gt => Some(KoopaBinaryOp::Gt),
+        BinaryOp::Leq => Some(KoopaBinaryOp::Le),
+        BinaryOp::Geq => Some(KoopaBinaryOp::Ge),
+        // And/Or are handled separately in the main logic
+        BinaryOp::And | BinaryOp::Or => None,
     }
 }
