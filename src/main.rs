@@ -35,9 +35,7 @@ fn main() -> Result<()> {
         panic!("Failed to parse input"); 
     };
 
-    let Ok(koopa_ir) = front_end::translate_to_koopa(ast) else {
-        panic!("Failed to translate to Koopa IR");
-    };
+    let koopa_ir = front_end::translate_to_koopa(ast);
 
 
     match mode.as_str() {

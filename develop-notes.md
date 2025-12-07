@@ -54,6 +54,8 @@ Function, Basic Block, Value 的名字必须以 @ 或者 % 开头. 前者表示�
   - Handle 是 Copy 类型，可以随意传递
   - 所有的 data 被存在一个 Vec 或 HashMap 里（称为 Pool 或 Arena），通过 handle 索引
 
+## Program
+
 Program
 - IR 的根结点，拥有编译单元的所有资源，销毁它会释放所有资源
 - 包含全局变量 handle 列表 `inst_layout`（数据通过 `borrow_values` 获取）
@@ -95,6 +97,8 @@ impl Program {
 
 }
 ```
+
+## Function
 
 FunctionData includes a DFG and a Layout
 - DFG (DataFlowGraph) holds all data of values (ValueData) and basicblocks (BasicBlockData), and maintains their use-define and define-use chain.
@@ -148,6 +152,7 @@ impl DataFlowGraph {
     pub fn data_eq(&self, lhs: &ValueData, rhs: &ValueData) -> bool
 
     pub fn new_bb(&mut self) -> BlockBuilder<'_>
+
     // Removes the given basic block, also removes all basic block parameters. Returns the corresponding basic block data.
     pub fn remove_bb(&mut self, bb: BasicBlock) -> BasicBlockData
 
@@ -155,6 +160,9 @@ impl DataFlowGraph {
     pub fn bbs(&self) -> &HashMap<BasicBlock, BasicBlockData>    // Mutable version also exists.
 }
 ```
+
+
+## BasicBlock
 
 BasicBlockData 只包含该基本块的元信息，以及使用该基本块的 Value 集合。其余信息保存在对应 FunctionData 的 DFG 或 Layout 中。
 ```rust
@@ -183,6 +191,28 @@ pub type InstList = KeyNodeList<Value, InstNode, InstMap>;
 // 添加指令：push_key_front, push_key_back, insert_key_before, insert_key_after
 ```
 
+BasicBlockBuilder：
+```rust
+/// Returned by method DataFlowGraph::new_bb.
+impl BasicBlockBuilder for BlockBuilder<'_> {
+    fn basic_block(self, name: Option<String>) -> BasicBlock
+    fn basic_block_with_param_names(
+        self,
+        name: Option<String>,
+        params: Vec<(Option<String>, Type)>,
+    ) -> BasicBlock
+    fn basic_block_with_params(
+        self,
+        name: Option<String>,
+        params_ty: Vec<Type>,
+    ) -> BasicBlock
+    fn insert_bb(&mut self, data: BasicBlockData) -> BasicBlock
+
+}
+```
+
+## Value
+
 Value 和 ValueData:
 ```rust
 impl Value {
@@ -195,6 +225,36 @@ impl ValueData {
     pub fn kind(&self) -> &ValueKind    // Mutable version also exists.
     // Returns a reference to the set of values that use this value.
     pub fn used_by(&self) -> &HashSet<Value>
+}
+
+impl LocalInstBuilder for LocalBuilder<'_> {
+    fn alloc(self, ty: Type) -> Value
+    fn load(self, src: Value) -> Value
+    fn store(self, value: Value, dest: Value) -> Value
+    fn get_ptr(self, src: Value, index: Value) -> Value
+    fn get_elem_ptr(self, src: Value, index: Value) -> Value
+    fn binary(self, op: BinaryOp, lhs: Value, rhs: Value) -> Value
+    fn branch(self, cond: Value, true_bb: BasicBlock, false_bb: BasicBlock) -> Value
+    fn branch_with_args(
+        self,
+        cond: Value,
+        true_bb: BasicBlock,
+        false_bb: BasicBlock,
+        true_args: Vec<Value>,
+        false_args: Vec<Value>,
+    ) -> Value
+    fn jump(self, target: BasicBlock) -> Value
+    fn jump_with_args(self, target: BasicBlock, args: Vec<Value>) -> Value
+    fn call(self, callee: Function, args: Vec<Value>) -> Value
+    fn ret(self, value: Option<Value>) -> Value
+}
+
+impl ValueBuilder for LocalBuilder<'_> {
+    fn raw(self, data: ValueData) -> Value
+    fn integer(self, value: i32) -> Value
+    fn zero_init(self, ty: Type) -> Value
+    fn undef(self, ty: Type) -> Value
+    fn aggregate(self, elems: Vec<Value>) -> Value
 }
 ```
 

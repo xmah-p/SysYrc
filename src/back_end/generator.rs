@@ -3,6 +3,9 @@ use koopa::ir::entities::ValueData;
 use koopa::ir::{FunctionData, Program, ValueKind};
 use std::fmt;
 
+/// Trait for generating RISC-V code from Koopa IR entities
+/// The lifetime parameter 'a ensures that any references
+/// within the context remain valid during the generation process
 pub trait GenerateRiscv {
     // fmt::Result is an alias for Result<(), fmt::Error>
     // Lifetime parameter 'a ensures that the context
@@ -12,6 +15,7 @@ pub trait GenerateRiscv {
 
 impl GenerateRiscv for Program {
     fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result {
+        context.program = Some(self);
         context.write_inst(".text")?;
         context.write_inst(".globl main")?;
 
@@ -56,7 +60,7 @@ impl GenerateRiscv for ValueData {
                     // error
                     panic!("Unsupported return instruction without value");
                 };
-                let ret_value_data = context.current_func.unwrap().dfg().value(ret_value);
+                let ret_value_data = context.get_value_from_func(ret_value);
                 match ret_value_data.kind() {
                     ValueKind::Integer(int) => {
                         context.write_inst(&format!("li a0, {}", int.value()))?;

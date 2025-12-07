@@ -1,14 +1,19 @@
 use std::fmt;
-use std::fmt::Write;    // to bring the write! macro into scope
+use std::fmt::Write; // to bring the write! macro into scope
 
-use koopa::ir::FunctionData;
+use koopa::ir::entities::ValueData;
+use koopa::ir::{FunctionData, Program, Value};
 
+/// Context for RISC-V code generation
 pub struct RiscvContext<'a> {
+    // Accumulates the generated RISC-V code
     out: String,
+    // Reference to the Koopa IR program
+    pub program: Option<&'a Program>,
+    // Current function being processed
+    // This is to access ValueData from Value during generation
     pub current_func: Option<&'a FunctionData>,
-    // Lifetime parameter 'a indicates that current_func
-    // is a reference valid as long as RiscvContext is valid
-    // i.e., RiscvContext cannot outlive the FunctionData it references
+    // [TODO] Maybe change FunctionData to Function?
 }
 
 impl<'a> RiscvContext<'a> {
@@ -17,6 +22,7 @@ impl<'a> RiscvContext<'a> {
     pub fn new() -> Self {
         RiscvContext {
             out: String::new(),
+            program: None,
             current_func: None,
         }
     }
@@ -32,5 +38,12 @@ impl<'a> RiscvContext<'a> {
 
     pub fn get_output(&self) -> &str {
         &self.out
+    }
+
+    pub fn get_value_from_func(&self, value: Value) -> &ValueData {
+        let func = self
+            .current_func
+            .expect("Current function is not set in RiscvContext");
+        func.dfg().value(value)
     }
 }
