@@ -22,7 +22,7 @@ impl GenerateRiscv for Program {
 
         for &func in self.func_layout() {
             let func_data: &FunctionData = self.func(func);
-            context.current_func = Some(func_data);
+            context.current_func = Some(func);
             func_data.generate(context)?;
             context.current_func = None;
         }
@@ -37,8 +37,11 @@ impl GenerateRiscv for FunctionData {
         context.write_line(&format!("{}:", name))?;
         context.init_stack_frame();
         let stack_size = context.get_stack_size();
-        if stack_size > 0 {
-            // [TODO]: Handle large stack sizes that exceed immediate range
+
+        if stack_size > 2047 {
+            context.write_inst(&format!("li t0, {}", stack_size))?;
+            context.write_inst(&format!("add sp, sp, t0"))?;
+        } else if stack_size > 0 {
             context.write_inst(&format!("addi sp, sp, -{}", stack_size))?;
         }
 
@@ -69,10 +72,13 @@ impl GenerateRiscv for ValueData {
                     panic!("Unsupported return instruction without value");
                 };
                 context.load_value_to_reg(ret_value, "a0")?;
+
                 // Function epilogue
                 let stack_size = context.get_stack_size();
-                if stack_size > 0 {
-                    // [TODO]: Handle large stack sizes that exceed immediate range
+                if stack_size > 2047 {
+                    context.write_inst(&format!("li t0, {}", stack_size))?;
+                    context.write_inst(&format!("add sp, sp, t0"))?;
+                } else if stack_size > 0 {
                     context.write_inst(&format!("addi sp, sp, {}", stack_size))?;
                 }
                 context.write_inst("ret")?;
@@ -93,10 +99,12 @@ impl GenerateRiscv for ValueData {
                     // Handle le and ge
                     match bin.op() {
                         KoopaBinaryOp::Le => {
+                            // t0 = (lhs <= rhs) <=> t0 = !(lhs > rhs)
                             context.write_inst("slt t0, t1, t0")?;
                             context.write_inst("xori t0, t0, 1")?;
                         }
                         KoopaBinaryOp::Ge => {
+                            // t0 = (lhs >= rhs) <=> t0 = !(lhs < rhs)
                             context.write_inst("slt t0, t0, t1")?;
                             context.write_inst("xori t0, t0, 1")?;
                         }
