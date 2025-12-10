@@ -1,6 +1,6 @@
 grammar;
 
-use crate::ast::{CompUnit, FuncDef, FuncType, Block, Stmt, Expr, UnaryOp, BinaryOp};
+use crate::ast::*;
 
 // grammar rules:
 // CompUnit    ::= FuncDef;
@@ -8,11 +8,21 @@ use crate::ast::{CompUnit, FuncDef, FuncType, Block, Stmt, Expr, UnaryOp, Binary
 // FuncDef     ::= FuncType IDENT "(" ")" Block;
 // FuncType    ::= "int";
 // 
-// Block       ::= "{" Stmt "}";
+// Block         ::= "{" {BlockItem} "}";
+// BlockItem     ::= Decl | Stmt;
+
 // Stmt        ::= "return" Exp ";";
-// 
+
+// Decl          ::= ConstDecl;
+// ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
+// BType         ::= "int";
+// ConstDef      ::= IDENT "=" ConstInitVal;
+// ConstInitVal  ::= ConstExp;
+// ConstExp    ::= Exp;
+
 // Exp         ::= LOrExp;
 // PrimaryExp  ::= "(" Exp ")" | Number;
+// PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 // Number      ::= INT_CONST;
 // UnaryExp    ::= PrimaryExp | UnaryOp UnaryExp;
 // UnaryOp     ::= "+" | "-" | "!";
@@ -23,6 +33,8 @@ use crate::ast::{CompUnit, FuncDef, FuncType, Block, Stmt, Expr, UnaryOp, Binary
 // LAndExp     ::= EqExp | LAndExp "&&" EqExp;
 // LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
 
+// LVal          ::= IDENT;
+
 
 // lexer rules
 match {
@@ -32,27 +44,87 @@ match {
     _                            // Default case: convert to token and pass to parser
 }
 
+
+// Non-teminal: Return Type = Match Pattern => Action Code
 pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
 
 FuncDef: FuncDef = {
-  <func_type: FuncType> <identifier: Ident> "(" ")" <block: Block> => {
+  <func_type: FuncType> <func_name: Ident> "(" ")" <block: Block> => {
     FuncDef { <> }
     // This is a macro provided by LALRPOP that automatically expands the names 
     // of the captures in the rule into fields of the struct.
     // Equivalent to:
     // FuncDef {
     //   func_type,
-    //   ident,
+    //   func_name,
     //   block,
     // }
   }
 }
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
-Stmt: Stmt = "return" <expr: Expr> ";" => Stmt { <> };
+// ==============================================
+// Block
+// ==============================================
+
+// `*` returns a `Vec`
+Block: Block = "{" <items: BlockItem*> "}" => Block { 
+    items: items.into_iter().flatten().collect() 
+};
+
+BlockItem: Vec<BlockItem> = {
+    <decl: Decl> => decl, 
+    <stmt: Stmt> => vec![BlockItem::Stmt(stmt)], 
+}
+
+Decl: Vec<BlockItem> = {
+    <c: ConstDecl> => c,
+}
+
+ConstDecl: Vec<BlockItem> = {
+    "const" <vt: VType> <defs: Comma<ConstDef>> ";" => {
+        defs.into_iter()
+            .map(|(name, init)| BlockItem::Decl( {Decl {
+                constant: true,
+                var_type: vt.clone(), 
+                var_name: name,
+                init_expr: init,
+            }}))
+            .collect()
+    }
+}
+
+VType: ValueType = {
+    "int" => ValueType::Int,
+}
 
 
+ConstDef: (String, Expr) = {
+    <id: Ident> "=" <val: ConstInitVal> => (id, val),
+}
+
+ConstInitVal: Expr = {
+    <e: ConstExpr> => e,
+}
+
+ConstExpr: Expr = {
+    <e: Expr> => e,
+}
+
+Comma<T>: Vec<T> = { 
+    <mut v: (<T> ",")*> <e: T> => {
+        v.push(e);
+        v
+    }
+};
+
+Stmt: Stmt = {
+    "return" <expr: Expr> ";" => Stmt::Return { expr },
+};
+
+// ==============================================
+// Expression
+// ==============================================
 Expr: Expr = LOrExpr;
 
 LOrExpr: Expr = {
@@ -153,7 +225,8 @@ UnaryExpr: Expr = {
 };
 
 PrimaryExpr: Expr = {
-    "(" <Expr> ")", // 括号直接剥离，不需要在 AST 中保留节点
+    "(" <Expr> ")",
+    <lval: LVal> => Expr::LVal(lval),
     <num:Number> => Expr::Number(num),
 }
 
@@ -178,6 +251,8 @@ BinaryOp: BinaryOp = {
     "/"  => BinaryOp::Div,
     "%"  => BinaryOp::Mod,
 };
+
+LVal: String = <name: Ident> => <>;
 
 Number: i32 = <num: IntConst> => <>;
 

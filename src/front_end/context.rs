@@ -1,19 +1,14 @@
 use koopa::ir::{
-    builder::BlockBuilder,
-    builder::LocalBuilder,
-    BasicBlock,
-    Function,
-    FunctionData,
-    Program,
+    builder::BlockBuilder, builder::LocalBuilder, BasicBlock, Function, FunctionData, Program,
     Value,
 };
 
+use super::symbol_table::SymbolTable;
+
 /// Context for Koopa IR generation
 pub struct KoopaContext<'a> {
-    // Reference to the Koopa IR program
     pub program: &'a mut Program,
-    // Current function being processed
-    // This is to access ValueData from Value during generation
+    pub symbol_table: SymbolTable,
     current_func: Option<Function>,
     current_bb: Option<BasicBlock>,
 }
@@ -24,6 +19,7 @@ impl<'a> KoopaContext<'a> {
             program,
             current_func: None,
             current_bb: None,
+            symbol_table: SymbolTable::new(),
         }
     }
 
@@ -55,7 +51,9 @@ impl<'a> KoopaContext<'a> {
     /// Pushes instruction `inst` to the end of the instruction list
     /// of the current basic block in the current function
     pub fn add_inst(&mut self, inst: Value) {
-        let bb = self.current_bb.expect("Current basic block is not set in KoopaContext");
+        let bb = self
+            .current_bb
+            .expect("Current basic block is not set in KoopaContext");
         self.current_func_mut()
             .layout_mut()
             .bb_mut(bb)

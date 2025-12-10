@@ -1,5 +1,6 @@
 mod context;
 mod generator;
+mod symbol_table;
 
 use std::io;
 

@@ -75,12 +75,14 @@ impl GenerateRiscv for ValueData {
 
                 // Function epilogue
                 let stack_size = context.get_stack_size();
+
                 if stack_size > 2047 {
                     context.write_inst(&format!("li t0, {}", stack_size))?;
                     context.write_inst(&format!("add sp, sp, t0"))?;
                 } else if stack_size > 0 {
                     context.write_inst(&format!("addi sp, sp, {}", stack_size))?;
                 }
+
                 context.write_inst("ret")?;
             }
 

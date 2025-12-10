@@ -1,3 +1,5 @@
+use core::panic;
+
 use super::context::KoopaContext;
 
 use crate::ast::*;
@@ -24,7 +26,7 @@ impl GenerateKoopa for FuncDef {
         };
 
         let func_data =
-            FunctionData::new(std::format!("@{}", self.identifier), Vec::new(), func_type);
+            FunctionData::new(std::format!("@{}", self.func_name), Vec::new(), func_type);
         let func = context.program.new_func(func_data);
         context.set_current_func(func);
 
@@ -37,16 +39,33 @@ impl GenerateKoopa for Block {
         let entry_bb: BasicBlock = context.new_bb().basic_block(Some("%entry".into()));
         context.add_bb(entry_bb);
         context.set_current_bb(entry_bb);
-        self.stmt.generate(context);
+
+        for item in &self.items {
+            match item {
+                BlockItem::Stmt(stmt) => stmt.generate(context),
+                BlockItem::Decl(decl) => decl.generate(context),
+            }
+        }
+    }
+}
+
+impl GenerateKoopa for Decl {
+    fn generate(&self, context: &mut KoopaContext) -> () {
+        ()
     }
 }
 
 impl GenerateKoopa for Stmt {
     fn generate(&self, context: &mut KoopaContext) -> () {
-        let expr = &self.expr;
-        let value: Value = expr.generate(context);
-        let inst: Value = context.new_value().ret(Some(value));
-        context.add_inst(inst);
+        match self {
+            Stmt::Return { expr } => {
+                let value: Value = expr.generate(context);
+                let inst: Value = context.new_value().ret(Some(value));
+                context.add_inst(inst);
+
+            },
+            _ => panic!("Unsupported statement"),
+        }
     }
 }
 
@@ -70,14 +89,16 @@ impl Expr {
                     // Handles logical and/or
                     let zero = context.new_value().integer(0);
 
-                    let lhs_bool = context
-                        .new_value()
-                        .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
+                    let lhs_bool =
+                        context
+                            .new_value()
+                            .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
                     context.add_inst(lhs_bool);
 
-                    let rhs_bool = context
-                        .new_value()
-                        .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
+                    let rhs_bool =
+                        context
+                            .new_value()
+                            .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
                     context.add_inst(rhs_bool);
 
                     let logic_op = match op {
@@ -108,6 +129,9 @@ impl Expr {
                     inst
                 }
             },
+            Expr::LVal(name) => {
+                panic!("LValue not support yet");
+            }
         }
     }
 }

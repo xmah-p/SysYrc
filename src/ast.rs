@@ -8,23 +8,32 @@ pub struct CompUnit {
 #[derive(Debug)]
 pub struct FuncDef {
     pub func_type: FuncType,
-    pub identifier: String,
+    pub func_name: String,
     pub block: Block,
 }
 
 #[derive(Debug)]
-pub enum FuncType {
-    Int,
-}
-
-#[derive(Debug)]
 pub struct Block {
-    pub stmt: Stmt,
+    pub items: Vec<BlockItem>,
 }
 
 #[derive(Debug)]
-pub struct Stmt {
-    pub expr: Expr,
+pub enum BlockItem {
+    Decl(Decl),
+    Stmt(Stmt),
+}
+
+#[derive(Debug)]
+pub struct Decl {
+    pub constant: bool,
+    pub var_type: ValueType,
+    pub var_name: String,
+    pub init_expr: Expr,
+}
+
+#[derive(Debug)]
+pub enum Stmt {
+    Return { expr: Expr },
 }
 
 #[derive(Debug)]
@@ -38,10 +47,11 @@ pub enum Expr {
         op: UnaryOp,
         expr: Box<Expr>,
     },
+    LVal(String),
     Number(i32),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOp {
     Or,
     And,
@@ -63,4 +73,14 @@ pub enum UnaryOp {
     Pos,
     Neg,
     Not,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FuncType {
+    Int,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ValueType {
+    Int,
 }

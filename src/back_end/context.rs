@@ -10,8 +10,8 @@ pub struct RiscvContext<'a> {
     // Accumulates the generated RISC-V code
     out: String,
     pub program: Option<&'a Program>,
-    pub current_func: Option<Function>,    // Current function being processed
-    pub current_value: Option<Value>,      // Current value being processed
+    pub current_func: Option<Function>, // Current function being processed
+    pub current_value: Option<Value>,   // Current value being processed
 
     values_map: HashMap<Value, i32>, // Map Koopa IR Values to their stack offsets
     stack_size: i32,                 // Total size of the stack frame
@@ -63,9 +63,10 @@ impl<'a> RiscvContext<'a> {
 
     /// Initializes the stack frame by calculating offsets for each Value
     /// and setting the total stack size.
+    /// Also generate function prologue
     pub fn init_stack_frame(&mut self) {
         self.values_map.clear();
-        self.stack_size = 0;
+        let mut stack_size = 0;
 
         let func = Self::func_data(self.program, self.current_func);
 
@@ -74,8 +75,8 @@ impl<'a> RiscvContext<'a> {
                 let inst_data: &ValueData = func.dfg().value(inst);
                 // [TODO]: Assume `alloc` instructions always allocate 4 bytes for now
                 if !inst_data.ty().is_unit() {
-                    self.values_map.insert(inst, self.stack_size);
-                    self.stack_size += 4; // Assuming each non-unit value takes 4 bytes
+                    self.values_map.insert(inst, stack_size);
+                    stack_size += 4; // Assuming each non-unit value takes 4 bytes
                 }
             }
         }
@@ -94,6 +95,7 @@ impl<'a> RiscvContext<'a> {
         self.stack_size
     }
 
+    /// Loads a value from the current stack frame to the specified register
     pub fn load_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
         let value_data = self.get_value_data(value);
 
@@ -106,9 +108,10 @@ impl<'a> RiscvContext<'a> {
                 }
             }
             // Result of other instructions
-            // They should be already stored in the stack
+            // They should have been already stored on the stack
             _ => {
                 let offset = self.get_stack_offset(value);
+                // [TODO]: Should allocate a register
                 if offset > 2047 {
                     self.write_inst(&format!("li t0, {}", offset))?;
                     self.write_inst(&format!("add t0, sp, t0"))?;
