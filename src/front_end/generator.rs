@@ -3,6 +3,7 @@ use core::panic;
 use super::context::KoopaContext;
 
 use crate::ast::*;
+use crate::front_end::symbol_table::VariableInfo;
 use koopa::ir::values::BinaryOp as KoopaBinaryOp;
 use koopa::ir::{builder_traits::*, BasicBlock, FunctionData, Type, Value};
 
@@ -30,7 +31,9 @@ impl GenerateKoopa for FuncDef {
         let func = context.program.new_func(func_data);
         context.set_current_func(func);
 
+        context.symbol_table.enter_scope();
         self.block.generate(context);
+        context.symbol_table.exit_scope();
     }
 }
 
@@ -51,7 +54,24 @@ impl GenerateKoopa for Block {
 
 impl GenerateKoopa for Decl {
     fn generate(&self, context: &mut KoopaContext) -> () {
-        ()
+        let name = format!("@{}", self.var_name);
+        let var_type = match self.var_type {
+            ValueType::Int => Type::get_i32(),
+        };
+        let is_const = self.constant;
+        let init_value;
+
+        if is_const {
+            let value = self.init_expr.compute_constexpr();
+            init_value = context.new_value().integer(value);
+        } else {
+            init_value = context.new_value().alloc(var_type);
+            context.add_inst(init_value);
+            let expr_value = self.init_expr.generate(context);
+            let store_inst = context.new_value().store(expr_value, init_value);
+            context.add_inst(store_inst);
+        }
+        context.symbol_table.insert(name, init_value, is_const);
     }
 }
 
@@ -62,14 +82,53 @@ impl GenerateKoopa for Stmt {
                 let value: Value = expr.generate(context);
                 let inst: Value = context.new_value().ret(Some(value));
                 context.add_inst(inst);
-
-            },
-            _ => panic!("Unsupported statement"),
+            }
         }
     }
 }
 
 impl Expr {
+    fn compute_constexpr(&self) -> i32 {
+        match self {
+            Expr::Number(n) => *n,
+            Expr::Unary { op, expr } => {
+                let val = expr.compute_constexpr();
+                match op {
+                    UnaryOp::Pos => val,
+                    UnaryOp::Neg => -val,
+                    // Note that `!val` is bitwise NOT instead of logical NOT
+                    UnaryOp::Not => (val == 0) as i32,
+                }
+            }
+            Expr::Binary { op, lhs, rhs } => {
+                let left = lhs.compute_constexpr();
+                let right = rhs.compute_constexpr();
+                match op {
+                    BinaryOp::Add => left + right,
+                    BinaryOp::Sub => left - right,
+                    BinaryOp::Mul => left * right,
+
+                    // [TODO]: Check if right == 0
+                    BinaryOp::Div => left / right,
+                    BinaryOp::Mod => left % right,
+
+                    BinaryOp::Eq => (left == right) as i32,
+                    BinaryOp::Neq => (left != right) as i32,
+                    BinaryOp::Lt => (left < right) as i32,
+                    BinaryOp::Gt => (left > right) as i32,
+                    BinaryOp::Leq => (left <= right) as i32,
+                    BinaryOp::Geq => (left >= right) as i32,
+
+                    BinaryOp::And => ((left != 0) && (right != 0)) as i32,
+                    BinaryOp::Or => ((left != 0) || (right != 0)) as i32,
+                }
+            }
+            Expr::LVal(_) => {
+                panic!("Constant expression cannot contain LValue");
+            }
+        }
+    }
+
     fn generate(&self, context: &mut KoopaContext) -> Value {
         match self {
             Expr::Number(n) => {
@@ -130,7 +189,19 @@ impl Expr {
                 }
             },
             Expr::LVal(name) => {
-                panic!("LValue not support yet");
+                let var_name = format!("@{}", name);
+                let addr: VariableInfo = context
+                    .symbol_table
+                    .lookup(&var_name)
+                    .expect("Variable not found in symbol table");
+                match addr {
+                    VariableInfo::ConstVariable(val) => val,
+                    VariableInfo::Variable(val) => {
+                        let load_inst = context.new_value().load(val);
+                        context.add_inst(load_inst);
+                        load_inst
+                    }
+                }
             }
         }
     }

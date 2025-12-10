@@ -3,12 +3,18 @@ use koopa::ir::{
     Value,
 };
 
+#[derive(Debug, Copy, Clone)]
+pub enum VariableInfo {
+    ConstVariable(Value),
+    Variable(Value),
+}
+
 /// Symbol table for Koopa IR generation
 /// Outer table is owned by the current table
 /// Top-level table has None as outer
 /// Only the most inner table is owned by KoopaContext
 pub struct SymbolTable {
-    table: HashMap<String, Value>,
+    table: HashMap<String, VariableInfo>,    // Symbol names start with `@` or `%`
     outer: Option<Box<SymbolTable>>,
 }
 
@@ -21,8 +27,8 @@ impl SymbolTable {
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Option<&Value> {
-        if let Some(val) = self.table.get(name) {
+    pub fn lookup(&self, name: &str) -> Option<VariableInfo> {
+        if let Some(&val) = self.table.get(name) {
             Some(val)
         } else if let Some(outer_table) = &self.outer {
             outer_table.lookup(name)
@@ -31,8 +37,13 @@ impl SymbolTable {
         }
     }
 
-    pub fn insert(&mut self, name: String, value: Value) {
-        self.table.insert(name, value);
+    pub fn insert(&mut self, name: String, value: Value, is_const: bool) {
+        let info = if is_const {
+            VariableInfo::ConstVariable(value)
+        } else {
+            VariableInfo::Variable(value)
+        };
+        self.table.insert(name, info);
     }
 
     pub fn remove(&mut self, name: &str) {
