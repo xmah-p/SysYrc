@@ -64,8 +64,8 @@ impl<'a> RiscvContext<'a> {
             .func(func.expect("Current function is not set in RiscvContext"))
     }
 
-    // If offset exceeds 12-bit immediate range, prepare the address in tmp_reg
-    fn prepare_addr(&mut self, offset: i32, tmp_reg: &str) -> fmt::Result {
+    /// If offset exceeds 12-bit immediate range, prepare the address in tmp_reg
+    pub fn prepare_addr(&mut self, offset: i32, tmp_reg: &str) -> fmt::Result {
         if offset > MAX_IMM_12 {
             self.write_inst(format_args!("li {}, {}", tmp_reg, offset))?;
             self.write_inst(format_args!("add {}, sp, {}", tmp_reg, tmp_reg))?;
@@ -73,7 +73,7 @@ impl<'a> RiscvContext<'a> {
         Ok(())
     }
 
-    fn get_addr_str(&self, offset: i32, tmp_reg: &str) -> String {
+    pub fn get_addr_str(&self, offset: i32, tmp_reg: &str) -> String {
         if offset > MAX_IMM_12 {
             format!("0({})", tmp_reg)
         } else {
@@ -106,22 +106,29 @@ impl<'a> RiscvContext<'a> {
 
     pub fn generate_prologue(&mut self) -> fmt::Result {
         let stack_size = self.get_stack_size();
-        if stack_size > 2047 {
-            self.write_inst(format_args!("li t0, {}", stack_size))?;
+        if stack_size == 0 {
+            return Ok(());
+        }
+        if stack_size > MAX_IMM_12 {
+            self.write_inst(format_args!("li t0, {}", -stack_size))?;
             self.write_inst(format_args!("add sp, sp, t0"))?;
-        } else if stack_size > 0 {
+        } else {
             self.write_inst(format_args!("addi sp, sp, -{}", stack_size))?;
         }
+
         Ok(())
     }
 
     pub fn generate_epilogue(&mut self) -> fmt::Result {
         let stack_size = self.get_stack_size();
 
-        if stack_size > 2047 {
+        if stack_size == 0 {
+            return Ok(());
+        }
+        if stack_size > MAX_IMM_12 {
             self.write_inst(format_args!("li t0, {}", stack_size))?;
             self.write_inst(format_args!("add sp, sp, t0"))?;
-        } else if stack_size > 0 {
+        } else {
             self.write_inst(format_args!("addi sp, sp, {}", stack_size))?;
         }
         Ok(())

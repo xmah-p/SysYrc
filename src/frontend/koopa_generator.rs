@@ -173,8 +173,7 @@ impl Expr {
     fn generate(&self, context: &mut KoopaContext) -> Value {
         match self {
             Expr::Number(n) => {
-                let value = context.new_value().integer(*n);
-                value
+                context.new_value().integer(*n)
             }
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_value = lhs.generate(context);
@@ -183,7 +182,6 @@ impl Expr {
                 if let Some(koopa_op) = map_binary_op(*op) {
                     let inst = context.new_value().binary(koopa_op, lhs_value, rhs_value);
                     context.add_inst(inst);
-
                     inst
                 } else {
                     // Handles logical and/or

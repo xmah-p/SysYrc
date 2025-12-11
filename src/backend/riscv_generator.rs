@@ -1,6 +1,6 @@
 use crate::backend::riscv_context::RiscvContext;
-use koopa::ir::{*, values::BinaryOp as KoopaBinaryOp};
 use koopa::ir::entities::ValueData;
+use koopa::ir::{values::BinaryOp as KoopaBinaryOp, *};
 use std::fmt;
 
 /// Trait for generating RISC-V code from Koopa IR entities
@@ -77,27 +77,29 @@ impl GenerateRiscv for ValueData {
                 context.load_value_to_reg(bin.rhs(), "t1")?;
 
                 let op_str = map_binary_op(bin.op());
-                if let Some(op) = op_str {
-                    match op {
-                        "seqz" => context.write_inst(format_args!("{} t0, t0", op))?,
-                        "snez" => context.write_inst(format_args!("{} t0, t0", op))?,
-                        _ => context.write_inst(format_args!("{} t0, t0, t1", op))?,
+                match bin.op() {
+                    KoopaBinaryOp::Le => {
+                        context.write_inst(format_args!("sgt t0, t0, t1"))?; // t0 = (lhs > rhs)
+                        context.write_inst(format_args!("seqz t0, t0"))?; // t0 = (t0 == 0) => !(lhs > rhs) => lhs <= rhs
                     }
-                } else {
-                    // Handle le and ge
-                    match bin.op() {
-                        KoopaBinaryOp::Le => {
-                            // t0 = (lhs <= rhs) <=> t0 = !(lhs > rhs)
-                            context.write_inst(format_args!("slt t0, t1, t0"))?;
-                            context.write_inst(format_args!("xori t0, t0, 1"))?;
-                        }
-                        KoopaBinaryOp::Ge => {
-                            // t0 = (lhs >= rhs) <=> t0 = !(lhs < rhs)
-                            context.write_inst(format_args!("slt t0, t0, t1"))?;
-                            context.write_inst(format_args!("xori t0, t0, 1"))?;
-                        }
-                        _ => {
-                            panic!("Unsupported binary operation in RISC-V generation");
+                    KoopaBinaryOp::Ge => {
+                        context.write_inst(format_args!("slt t0, t0, t1"))?;
+                        context.write_inst(format_args!("seqz t0, t0"))?;
+                    }
+                    KoopaBinaryOp::Eq => {
+                        context.write_inst(format_args!("xor t0, t0, t1"))?;
+                        context.write_inst(format_args!("seqz t0, t0"))?;
+                    }
+                    KoopaBinaryOp::NotEq => {
+                        context.write_inst(format_args!("xor t0, t0, t1"))?;
+                        context.write_inst(format_args!("snez t0, t0"))?;
+                    }
+                    _ => {
+                        // Regular binary operations
+                        if let Some(op) = op_str {
+                            context.write_inst(format_args!("{} t0, t0, t1", op))?;
+                        } else {
+                            unreachable!("Unknown binary op");
                         }
                     }
                 }
@@ -115,28 +117,21 @@ impl GenerateRiscv for ValueData {
                 let dest = store.dest();
                 let offset = context.get_stack_offset(dest);
                 context.load_value_to_reg(value, "t0")?;
-                if offset > 2047 {
-                    context.write_inst(format_args!("li t1, {}", offset))?;
-                    context.write_inst(format_args!("add t1, sp, t1"))?;
-                    context.write_inst(format_args!("sw t0, 0(t1)"))?;
-                } else {
-                    context.write_inst(format_args!("sw t0, {}(sp)", offset))?;
-                }
+                context.prepare_addr(offset, "t1")?;
+                let addr: String = context.get_addr_str(offset, "t1");
+                context.write_inst(format_args!("sw t0, {}", addr))?;
             }
 
             ValueKind::Load(load) => {
                 let src = load.src();
                 let offset = context.get_stack_offset(src);
-                if offset > 2047 {
-                    context.write_inst(format_args!("li t0, {}", offset))?;
-                    context.write_inst(format_args!("add t0, sp, t0"))?;
-                    context.write_inst(format_args!("lw t0, 0(t0)"))?;
-                } else {
-                    context.write_inst(format_args!("lw t0, {}(sp)", offset))?;
-                }
-                context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
-            } 
 
+                context.prepare_addr(offset, "t0")?;
+                let addr: String = context.get_addr_str(offset, "t0");
+                context.write_inst(format_args!("lw t0, {}", addr))?;
+
+                context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
+            }
             _ => {
                 panic!("Unsupported instruction in RISC-V generation");
             }
@@ -161,8 +156,7 @@ fn map_binary_op(op: KoopaBinaryOp) -> Option<&'static str> {
         KoopaBinaryOp::Sar => Some("sra"),
         KoopaBinaryOp::Shl => Some("sll"),
         KoopaBinaryOp::Shr => Some("srl"),
-        KoopaBinaryOp::Eq => Some("seqz"),    // seqz rd, rs1
-        KoopaBinaryOp::NotEq => Some("snez"), // snez rd, rs1
-        KoopaBinaryOp::Ge | KoopaBinaryOp::Le | _ => None,
+        KoopaBinaryOp::Xor => Some("xor"),
+        KoopaBinaryOp::Eq | KoopaBinaryOp::NotEq | KoopaBinaryOp::Ge | KoopaBinaryOp::Le => None,
     }
 }
