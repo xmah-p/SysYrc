@@ -1,7 +1,6 @@
 use super::context::RiscvContext;
+use koopa::ir::{*, values::BinaryOp as KoopaBinaryOp};
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::BinaryOp as KoopaBinaryOp;
-use koopa::ir::{FunctionData, Program, ValueKind};
 use std::fmt;
 
 /// Trait for generating RISC-V code from Koopa IR entities

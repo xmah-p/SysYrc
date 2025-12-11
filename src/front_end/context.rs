@@ -1,7 +1,6 @@
-use koopa::ir::{
-    builder::BlockBuilder, builder::LocalBuilder, entities::ValueKind, BasicBlock, Function,
-    FunctionData, Program, Value,
-};
+use koopa::ir::*;
+use koopa::ir::entities::{ValueData, ValueKind};
+use koopa::ir::builder::{BlockBuilder, LocalBuilder};
 
 use super::symbol_table::SymbolTable;
 
@@ -37,8 +36,18 @@ impl<'a> KoopaContext<'a> {
         )
     }
 
+    pub fn get_value_data(&self, value: Value) -> &ValueData {
+        self.current_func().dfg().value(value)
+    }
+
     pub fn get_value_kind(&self, value: Value) -> ValueKind {
-        self.current_func().dfg().value(value).kind().clone()
+        self.get_value_data(value).kind().clone()
+    }
+
+    pub fn set_value_name(&mut self, value: Value, name: String) {
+        self.current_func_mut()
+            .dfg_mut()
+            .set_value_name(value, Some(name));
     }
 
     pub fn set_current_func(&mut self, func: Function) {

@@ -2,10 +2,9 @@ use core::panic;
 
 use super::context::KoopaContext;
 
-use crate::ast::*;
+use crate::ast::{*, BinaryOp as AstBinaryOp};
 use crate::front_end::symbol_table::VariableInfo;
-use koopa::ir::values::BinaryOp as KoopaBinaryOp;
-use koopa::ir::{builder_traits::*, entities::ValueKind, BasicBlock, FunctionData, Type, Value};
+use koopa::ir::{*, builder_traits::*, values::BinaryOp as KoopaBinaryOp};
 
 /// Trait for generating Koopa IR entities
 pub trait GenerateKoopa {
@@ -77,6 +76,8 @@ impl GenerateKoopa for Decl {
         // Save its address in symbol table
         else {
             init_value = context.new_value().alloc(var_type);
+            context.set_value_name(init_value, name.clone());
+
             context.add_inst(init_value);
             if let Some(expr) = &self.init_expr {
                 let expr_value = expr.generate(context);
@@ -134,23 +135,23 @@ impl Expr {
                 let left = lhs.compute_constexpr(context);
                 let right = rhs.compute_constexpr(context);
                 match op {
-                    BinaryOp::Add => left + right,
-                    BinaryOp::Sub => left - right,
-                    BinaryOp::Mul => left * right,
+                    AstBinaryOp::Add => left + right,
+                    AstBinaryOp::Sub => left - right,
+                    AstBinaryOp::Mul => left * right,
 
                     // [TODO]: Check if right == 0
-                    BinaryOp::Div => left / right,
-                    BinaryOp::Mod => left % right,
+                    AstBinaryOp::Div => left / right,
+                    AstBinaryOp::Mod => left % right,
 
-                    BinaryOp::Eq => (left == right) as i32,
-                    BinaryOp::Neq => (left != right) as i32,
-                    BinaryOp::Lt => (left < right) as i32,
-                    BinaryOp::Gt => (left > right) as i32,
-                    BinaryOp::Leq => (left <= right) as i32,
-                    BinaryOp::Geq => (left >= right) as i32,
+                    AstBinaryOp::Eq => (left == right) as i32,
+                    AstBinaryOp::Neq => (left != right) as i32,
+                    AstBinaryOp::Lt => (left < right) as i32,
+                    AstBinaryOp::Gt => (left > right) as i32,
+                    AstBinaryOp::Leq => (left <= right) as i32,
+                    AstBinaryOp::Geq => (left >= right) as i32,
 
-                    BinaryOp::And => ((left != 0) && (right != 0)) as i32,
-                    BinaryOp::Or => ((left != 0) || (right != 0)) as i32,
+                    AstBinaryOp::And => ((left != 0) && (right != 0)) as i32,
+                    AstBinaryOp::Or => ((left != 0) || (right != 0)) as i32,
                 }
             }
             Expr::LVal(name) => {
@@ -203,8 +204,8 @@ impl Expr {
                     context.add_inst(rhs_bool);
 
                     let logic_op = match op {
-                        BinaryOp::And => KoopaBinaryOp::And,
-                        BinaryOp::Or => KoopaBinaryOp::Or,
+                        AstBinaryOp::And => KoopaBinaryOp::And,
+                        AstBinaryOp::Or => KoopaBinaryOp::Or,
                         _ => unreachable!("Already handled by map_binary_op"),
                     };
 
@@ -249,20 +250,20 @@ impl Expr {
     }
 }
 
-fn map_binary_op(op: BinaryOp) -> Option<KoopaBinaryOp> {
+fn map_binary_op(op: AstBinaryOp) -> Option<KoopaBinaryOp> {
     match op {
-        BinaryOp::Add => Some(KoopaBinaryOp::Add),
-        BinaryOp::Sub => Some(KoopaBinaryOp::Sub),
-        BinaryOp::Mul => Some(KoopaBinaryOp::Mul),
-        BinaryOp::Div => Some(KoopaBinaryOp::Div),
-        BinaryOp::Mod => Some(KoopaBinaryOp::Mod),
-        BinaryOp::Eq => Some(KoopaBinaryOp::Eq),
-        BinaryOp::Neq => Some(KoopaBinaryOp::NotEq),
-        BinaryOp::Lt => Some(KoopaBinaryOp::Lt),
-        BinaryOp::Gt => Some(KoopaBinaryOp::Gt),
-        BinaryOp::Leq => Some(KoopaBinaryOp::Le),
-        BinaryOp::Geq => Some(KoopaBinaryOp::Ge),
+        AstBinaryOp::Add => Some(KoopaBinaryOp::Add),
+        AstBinaryOp::Sub => Some(KoopaBinaryOp::Sub),
+        AstBinaryOp::Mul => Some(KoopaBinaryOp::Mul),
+        AstBinaryOp::Div => Some(KoopaBinaryOp::Div),
+        AstBinaryOp::Mod => Some(KoopaBinaryOp::Mod),
+        AstBinaryOp::Eq => Some(KoopaBinaryOp::Eq),
+        AstBinaryOp::Neq => Some(KoopaBinaryOp::NotEq),
+        AstBinaryOp::Lt => Some(KoopaBinaryOp::Lt),
+        AstBinaryOp::Gt => Some(KoopaBinaryOp::Gt),
+        AstBinaryOp::Leq => Some(KoopaBinaryOp::Le),
+        AstBinaryOp::Geq => Some(KoopaBinaryOp::Ge),
         // And/Or are handled separately in the main logic
-        BinaryOp::And | BinaryOp::Or => None,
+        AstBinaryOp::And | AstBinaryOp::Or => None,
     }
 }

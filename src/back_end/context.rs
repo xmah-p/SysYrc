@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write; // to bring the write! macro into scope
 
+use koopa::ir::*;
 use koopa::ir::entities::ValueData;
-use koopa::ir::{Function, FunctionData, Program, Value, ValueKind};
 
 /// Context for RISC-V code generation
 pub struct RiscvContext<'a> {
