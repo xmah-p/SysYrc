@@ -35,9 +35,10 @@ impl GenerateRiscv for FunctionData {
         // Function name starts with an '@'
         let name = self.name().replace("@", "");
         context.write_line(&format!("{}:", name))?;
+
+        // Stack frame setup
         context.init_stack_frame();
         let stack_size = context.get_stack_size();
-
         if stack_size > 2047 {
             context.write_inst(&format!("li t0, {}", stack_size))?;
             context.write_inst(&format!("add sp, sp, t0"))?;
@@ -45,11 +46,13 @@ impl GenerateRiscv for FunctionData {
             context.write_inst(&format!("addi sp, sp, -{}", stack_size))?;
         }
 
+        // Generate code for each basic block
         for (&bb, node) in self.layout().bbs() {
             // node is a BasicBlockNode
             let bb_name = self.dfg().bb(bb).name().as_ref().unwrap().replace("%", "");
             context.write_line(&format!("{}:", bb_name))?;
 
+            // Generate code for each instruction in the basic block
             for &inst in node.insts().keys() {
                 // inst is a Value
                 let inst_data = self.dfg().value(inst);
@@ -68,7 +71,6 @@ impl GenerateRiscv for ValueData {
 
             ValueKind::Return(value) => {
                 let Some(ret_value) = value.value() else {
-                    // error
                     panic!("Unsupported return instruction without value");
                 };
                 context.load_value_to_reg(ret_value, "a0")?;
@@ -117,6 +119,39 @@ impl GenerateRiscv for ValueData {
                 }
                 context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
             }
+
+            ValueKind::Alloc(_) => {
+                // Allocation handled in stack frame setup
+                // does nothing
+            }
+
+            // store %1, @x
+            ValueKind::Store(store) => {
+                let value = store.value();
+                let dest = store.dest();
+                let offset = context.get_stack_offset(dest);
+                context.load_value_to_reg(value, "t0")?;
+                if offset > 2047 {
+                    context.write_inst(&format!("li t1, {}", offset))?;
+                    context.write_inst(&format!("add t1, sp, t1"))?;
+                    context.write_inst("sw t0, 0(t1)")?;
+                } else {
+                    context.write_inst(&format!("sw t0, {}(sp)", offset))?;
+                }
+            }
+
+            ValueKind::Load(load) => {
+                let src = load.src();
+                let offset = context.get_stack_offset(src);
+                if offset > 2047 {
+                    context.write_inst(&format!("li t0, {}", offset))?;
+                    context.write_inst(&format!("add t0, sp, t0"))?;
+                    context.write_inst("lw t0, 0(t0)")?;
+                } else {
+                    context.write_inst(&format!("lw t0, {}(sp)", offset))?;
+                }
+                context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
+            } 
 
             _ => {
                 panic!("Unsupported instruction in RISC-V generation");
