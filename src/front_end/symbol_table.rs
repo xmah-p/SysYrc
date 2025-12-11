@@ -3,6 +3,11 @@ use koopa::ir::{
     Value,
 };
 
+/// Information about a variable in the symbol table
+/// For constant variables, their values can be calculated at compile time.
+/// We store their Integer values directly.
+/// For non-constant variables, we store pointers to their allocated memory,
+/// i.e., the Value returned by the `alloc` instruction.
 #[derive(Debug, Copy, Clone)]
 pub enum VariableInfo {
     ConstVariable(Value),
@@ -44,10 +49,6 @@ impl SymbolTable {
             VariableInfo::Variable(value)
         };
         self.table.insert(name, info);
-    }
-
-    pub fn remove(&mut self, name: &str) {
-        self.table.remove(name);
     }
 
     pub fn enter_scope(&mut self) {

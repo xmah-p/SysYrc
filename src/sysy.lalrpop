@@ -12,13 +12,17 @@ use crate::ast::*;
 // BlockItem     ::= Decl | Stmt;
 
 // Stmt        ::= "return" Exp ";";
+//                 | LVal "=" Exp ";";
 
-// Decl          ::= ConstDecl;
+// Decl          ::= ConstDecl | VarDecl;
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
 // BType         ::= "int";
 // ConstDef      ::= IDENT "=" ConstInitVal;
 // ConstInitVal  ::= ConstExp;
 // ConstExp    ::= Exp;
+// VarDecl       ::= BType VarDef {"," VarDef} ";";
+// VarDef        ::= IDENT ["=" InitVal];
+// InitVal       ::= Exp;
 
 // Exp         ::= LOrExp;
 // PrimaryExp  ::= "(" Exp ")" | Number;
@@ -79,6 +83,7 @@ BlockItem: Vec<BlockItem> = {
 
 Decl: Vec<BlockItem> = {
     <c: ConstDecl> => c,
+    <v: VarDecl> => v,
 }
 
 ConstDecl: Vec<BlockItem> = {
@@ -86,6 +91,19 @@ ConstDecl: Vec<BlockItem> = {
         defs.into_iter()
             .map(|(name, init)| BlockItem::Decl( {Decl {
                 constant: true,
+                var_type: vt.clone(), 
+                var_name: name,
+                init_expr: Some(init),
+            }}))
+            .collect()
+    }
+}
+
+VarDecl: Vec<BlockItem> = {
+    <vt: VType> <defs: Comma<VarDef>> ";" => {
+        defs.into_iter()
+            .map(|(name, init)| BlockItem::Decl( {Decl {
+                constant: false,
                 var_type: vt.clone(), 
                 var_name: name,
                 init_expr: init,
@@ -111,6 +129,15 @@ ConstExpr: Expr = {
     <e: Expr> => e,
 }
 
+VarDef: (String, Option<Expr>) = {
+    <id: Ident> "=" <val: InitVal> => (id, Some(val)),
+    <id: Ident> => (id, None),
+}
+
+InitVal: Expr = {
+    <e: Expr> => e,
+}
+
 Comma<T>: Vec<T> = { 
     <mut v: (<T> ",")*> <e: T> => {
         v.push(e);
@@ -120,6 +147,10 @@ Comma<T>: Vec<T> = {
 
 Stmt: Stmt = {
     "return" <expr: Expr> ";" => Stmt::Return { expr },
+    <lval: LVal> "=" <expr: Expr> ";" => Stmt::Assign {
+        lval: lval,
+        expr: expr,
+    },
 };
 
 // ==============================================

@@ -28,12 +28,16 @@ pub struct Decl {
     pub constant: bool,
     pub var_type: ValueType,
     pub var_name: String,
-    pub init_expr: Expr,
+    pub init_expr: Option<Expr>,
 }
 
 #[derive(Debug)]
 pub enum Stmt {
     Return { expr: Expr },
+    Assign {
+        lval: String,
+        expr: Expr,
+    },
 }
 
 #[derive(Debug)]
@@ -47,6 +51,8 @@ pub enum Expr {
         op: UnaryOp,
         expr: Box<Expr>,
     },
+    // Note that constant variable references are also treated as LVal here
+    // Their values will be resolved during constant expression evaluation
     LVal(String),
     Number(i32),
 }

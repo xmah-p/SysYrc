@@ -5,7 +5,7 @@ use super::context::KoopaContext;
 use crate::ast::*;
 use crate::front_end::symbol_table::VariableInfo;
 use koopa::ir::values::BinaryOp as KoopaBinaryOp;
-use koopa::ir::{builder_traits::*, BasicBlock, FunctionData, Type, Value};
+use koopa::ir::{builder_traits::*, entities::ValueKind, BasicBlock, FunctionData, Type, Value};
 
 /// Trait for generating Koopa IR entities
 pub trait GenerateKoopa {
@@ -59,17 +59,30 @@ impl GenerateKoopa for Decl {
             ValueType::Int => Type::get_i32(),
         };
         let is_const = self.constant;
-        let init_value;
+        let init_value: Value;
 
+        // Store variable info in symbol table
+        // Constant variable
+        // Compute its value at compile time and store the result in symbol table
         if is_const {
-            let value = self.init_expr.compute_constexpr();
-            init_value = context.new_value().integer(value);
-        } else {
+            let result: i32 = self
+                .init_expr
+                .as_ref()
+                .expect("Constant declaration must have an initializer")
+                .compute_constexpr(context);
+            init_value = context.new_value().integer(result);
+        }
+        // Non-constant variable
+        // Allocate space for the variable and store the initial value if exists
+        // Save its address in symbol table
+        else {
             init_value = context.new_value().alloc(var_type);
             context.add_inst(init_value);
-            let expr_value = self.init_expr.generate(context);
-            let store_inst = context.new_value().store(expr_value, init_value);
-            context.add_inst(store_inst);
+            if let Some(expr) = &self.init_expr {
+                let expr_value = expr.generate(context);
+                let store_inst = context.new_value().store(expr_value, init_value);
+                context.add_inst(store_inst);
+            }
         }
         context.symbol_table.insert(name, init_value, is_const);
     }
@@ -83,16 +96,33 @@ impl GenerateKoopa for Stmt {
                 let inst: Value = context.new_value().ret(Some(value));
                 context.add_inst(inst);
             }
+            Stmt::Assign { lval, expr } => {
+                let var_name = format!("@{}", lval);
+                let addr: VariableInfo = context
+                    .symbol_table
+                    .lookup(&var_name)
+                    .expect("Variable not found in symbol table");
+                match addr {
+                    VariableInfo::ConstVariable(_) => {
+                        panic!("Cannot assign to a constant variable");
+                    }
+                    VariableInfo::Variable(var_addr) => {
+                        let expr_value = expr.generate(context);
+                        let store_inst = context.new_value().store(expr_value, var_addr);
+                        context.add_inst(store_inst);
+                    }
+                }
+            }
         }
     }
 }
 
 impl Expr {
-    fn compute_constexpr(&self) -> i32 {
+    fn compute_constexpr(&self, context: &KoopaContext) -> i32 {
         match self {
             Expr::Number(n) => *n,
             Expr::Unary { op, expr } => {
-                let val = expr.compute_constexpr();
+                let val = expr.compute_constexpr(context);
                 match op {
                     UnaryOp::Pos => val,
                     UnaryOp::Neg => -val,
@@ -101,8 +131,8 @@ impl Expr {
                 }
             }
             Expr::Binary { op, lhs, rhs } => {
-                let left = lhs.compute_constexpr();
-                let right = rhs.compute_constexpr();
+                let left = lhs.compute_constexpr(context);
+                let right = rhs.compute_constexpr(context);
                 match op {
                     BinaryOp::Add => left + right,
                     BinaryOp::Sub => left - right,
@@ -123,8 +153,20 @@ impl Expr {
                     BinaryOp::Or => ((left != 0) || (right != 0)) as i32,
                 }
             }
-            Expr::LVal(_) => {
-                panic!("Constant expression cannot contain LValue");
+            Expr::LVal(name) => {
+                let var_name = format!("@{}", name);
+                let addr: VariableInfo = context
+                    .symbol_table
+                    .lookup(&var_name)
+                    .expect("Variable not found in symbol table");
+                let VariableInfo::ConstVariable(var) = addr else {
+                    panic!("Cannot use non-constant variable in constant expression");
+                };
+                let v = context.get_value_kind(var);
+                let ValueKind::Integer(n) = v else {
+                    panic!("Constant variable does not hold an integer value");
+                };
+                n.value()
             }
         }
     }

@@ -1,6 +1,6 @@
 use koopa::ir::{
-    builder::BlockBuilder, builder::LocalBuilder, BasicBlock, Function, FunctionData, Program,
-    Value,
+    builder::BlockBuilder, builder::LocalBuilder, entities::ValueKind, BasicBlock, Function,
+    FunctionData, Program, Value,
 };
 
 use super::symbol_table::SymbolTable;
@@ -28,6 +28,17 @@ impl<'a> KoopaContext<'a> {
             self.current_func
                 .expect("Current function is not set in KoopaContext"),
         )
+    }
+
+    pub fn current_func(&self) -> &FunctionData {
+        self.program.func(
+            self.current_func
+                .expect("Current function is not set in KoopaContext"),
+        )
+    }
+
+    pub fn get_value_kind(&self, value: Value) -> ValueKind {
+        self.current_func().dfg().value(value).kind().clone()
     }
 
     pub fn set_current_func(&mut self, func: Function) {
