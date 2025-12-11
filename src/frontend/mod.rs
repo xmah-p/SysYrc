@@ -1,5 +1,5 @@
-mod context;
-mod generator;
+mod koopa_context;
+mod koopa_generator;
 mod symbol_table;
 
 use std::io;
@@ -7,8 +7,8 @@ use std::io;
 use koopa::ir::Program;
 
 use koopa::back::KoopaGenerator;
-use context::KoopaContext;
-use generator::GenerateKoopa;
+use koopa_context::KoopaContext;
+use koopa_generator::GenerateKoopa;
 
 
 pub fn translate_to_koopa(cu: crate::ast::CompUnit) -> Program {

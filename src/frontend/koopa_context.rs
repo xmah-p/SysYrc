@@ -2,7 +2,7 @@ use koopa::ir::*;
 use koopa::ir::entities::{ValueData, ValueKind};
 use koopa::ir::builder::{BlockBuilder, LocalBuilder};
 
-use super::symbol_table::SymbolTable;
+use crate::frontend::symbol_table::SymbolTable;
 
 /// Context for Koopa IR generation
 pub struct KoopaContext<'a> {

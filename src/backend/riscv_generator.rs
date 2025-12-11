@@ -1,4 +1,4 @@
-use super::context::RiscvContext;
+use crate::backend::riscv_context::RiscvContext;
 use koopa::ir::{*, values::BinaryOp as KoopaBinaryOp};
 use koopa::ir::entities::ValueData;
 use std::fmt;

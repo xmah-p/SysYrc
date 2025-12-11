@@ -4,8 +4,8 @@ use std::fs::read_to_string;
 use std::io::Result;
 
 pub mod ast;
-pub mod front_end;
-pub mod back_end;
+pub mod frontend;
+pub mod backend;
 
 lalrpop_mod!(sysy);  
 
@@ -35,15 +35,15 @@ fn main() -> Result<()> {
         panic!("Failed to parse input"); 
     };
 
-    let koopa_ir = front_end::translate_to_koopa(ast);
+    let koopa_ir = frontend::translate_to_koopa(ast);
 
 
     match mode.as_str() {
         "-koopa" => {
-            front_end::emit_ir(&koopa_ir, writer)?;
+            frontend::emit_ir(&koopa_ir, writer)?;
         }
         "-riscv" => {
-            back_end::emit_riscv(&koopa_ir, writer)?;
+            backend::emit_riscv(&koopa_ir, writer)?;
         }
         "-perf" => {
             panic!("Perf backend not implemented yet");

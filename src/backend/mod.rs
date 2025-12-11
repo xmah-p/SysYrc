@@ -1,9 +1,9 @@
-mod context;
-mod generator;
+mod riscv_context;
+mod riscv_generator;
 
 use koopa::ir::Program;
-use context::RiscvContext;
-use generator::GenerateRiscv;
+use riscv_context::RiscvContext;
+use riscv_generator::GenerateRiscv;
 use std::io;
 
 pub fn emit_riscv(program: &Program, mut writer: impl io::Write) -> io::Result<()> {

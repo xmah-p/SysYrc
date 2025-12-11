@@ -1,9 +1,7 @@
 use core::panic;
 
-use super::context::KoopaContext;
-
 use crate::ast::{*, BinaryOp as AstBinaryOp};
-use crate::front_end::symbol_table::VariableInfo;
+use crate::frontend::{symbol_table::VariableInfo, koopa_context::KoopaContext};
 use koopa::ir::{*, builder_traits::*, values::BinaryOp as KoopaBinaryOp};
 
 /// Trait for generating Koopa IR entities
