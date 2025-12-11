@@ -2,8 +2,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write; // to bring the write! macro into scope
 
-use koopa::ir::*;
 use koopa::ir::entities::ValueData;
+use koopa::ir::*;
+
+const MAX_IMM_12: i32 = 2047; // Maximum positive immediate for 12-bit signed integer
+const WORD_SIZE: i32 = 4;
 
 /// Context for RISC-V code generation
 pub struct RiscvContext<'a> {
@@ -42,8 +45,8 @@ impl<'a> RiscvContext<'a> {
     }
 
     /// Writes an instruction line with indentation.
-    pub fn write_inst(&mut self, content: &str) -> fmt::Result {
-        writeln!(self.out, "    {}", content)
+    pub fn write_inst(&mut self, args: fmt::Arguments) -> fmt::Result {
+        writeln!(self.out, "    {}", args)
     }
 
     pub fn get_output(&self) -> &str {
@@ -61,9 +64,25 @@ impl<'a> RiscvContext<'a> {
             .func(func.expect("Current function is not set in RiscvContext"))
     }
 
+    // If offset exceeds 12-bit immediate range, prepare the address in tmp_reg
+    fn prepare_addr(&mut self, offset: i32, tmp_reg: &str) -> fmt::Result {
+        if offset > MAX_IMM_12 {
+            self.write_inst(format_args!("li {}, {}", tmp_reg, offset))?;
+            self.write_inst(format_args!("add {}, sp, {}", tmp_reg, tmp_reg))?;
+        }
+        Ok(())
+    }
+
+    fn get_addr_str(&self, offset: i32, tmp_reg: &str) -> String {
+        if offset > MAX_IMM_12 {
+            format!("0({})", tmp_reg)
+        } else {
+            format!("{}(sp)", offset)
+        }
+    }
+
     /// Initializes the stack frame by calculating offsets for each Value
     /// and setting the total stack size.
-    /// Also generate function prologue
     pub fn init_stack_frame(&mut self) {
         self.values_map.clear();
         let mut stack_size = 0;
@@ -76,12 +95,36 @@ impl<'a> RiscvContext<'a> {
                 // [TODO]: Assume `alloc` instructions always allocate 4 bytes for now
                 if !inst_data.ty().is_unit() {
                     self.values_map.insert(inst, stack_size);
-                    stack_size += 4; // Assuming each non-unit value takes 4 bytes
+                    stack_size += WORD_SIZE; // Assuming each non-unit value takes 4 bytes
                 }
             }
         }
         // Align stack size to 16 bytes
-        self.stack_size = (self.stack_size + 15) & !15;
+        stack_size = (stack_size + 15) & !15;
+        self.stack_size = stack_size;
+    }
+
+    pub fn generate_prologue(&mut self) -> fmt::Result {
+        let stack_size = self.get_stack_size();
+        if stack_size > 2047 {
+            self.write_inst(format_args!("li t0, {}", stack_size))?;
+            self.write_inst(format_args!("add sp, sp, t0"))?;
+        } else if stack_size > 0 {
+            self.write_inst(format_args!("addi sp, sp, -{}", stack_size))?;
+        }
+        Ok(())
+    }
+
+    pub fn generate_epilogue(&mut self) -> fmt::Result {
+        let stack_size = self.get_stack_size();
+
+        if stack_size > 2047 {
+            self.write_inst(format_args!("li t0, {}", stack_size))?;
+            self.write_inst(format_args!("add sp, sp, t0"))?;
+        } else if stack_size > 0 {
+            self.write_inst(format_args!("addi sp, sp, {}", stack_size))?;
+        }
+        Ok(())
     }
 
     pub fn get_stack_offset(&self, value: Value) -> i32 {
@@ -102,22 +145,18 @@ impl<'a> RiscvContext<'a> {
         match value_data.kind() {
             ValueKind::Integer(int) => {
                 if int.value() == 0 {
-                    self.write_inst(&format!("mv {}, x0", reg_name))
+                    self.write_inst(format_args!("mv {}, x0", reg_name))
                 } else {
-                    self.write_inst(&format!("li {}, {}", reg_name, int.value()))
+                    self.write_inst(format_args!("li {}, {}", reg_name, int.value()))
                 }
             }
             // Result of other instructions
             // They should have been already stored on the stack
             _ => {
                 let offset = self.get_stack_offset(value);
-                // [TODO]: Should allocate a register
-                if offset > 2047 {
-                    self.write_inst(&format!("li t0, {}", offset))?;
-                    self.write_inst(&format!("add t0, sp, t0"))?;
-                    return self.write_inst(&format!("lw {}, 0(t0)", reg_name));
-                }
-                self.write_inst(&format!("lw {}, {}(sp)", reg_name, offset))
+                self.prepare_addr(offset, "t0")?;
+                let addr: String = self.get_addr_str(offset, "t0");
+                self.write_inst(format_args!("lw {}, {}", reg_name, addr))
             }
         }
     }
@@ -128,11 +167,8 @@ impl<'a> RiscvContext<'a> {
         }
 
         let offset = self.get_stack_offset(value);
-        if offset > 2047 {
-            self.write_inst(&format!("li t0, {}", offset))?;
-            self.write_inst(&format!("add t0, sp, t0"))?;
-            return self.write_inst(&format!("sw {}, 0(t0)", reg_name));
-        }
-        self.write_inst(&format!("sw {}, {}(sp)", reg_name, offset))
+        self.prepare_addr(offset, "t0")?;
+        let addr: String = self.get_addr_str(offset, "t0");
+        self.write_inst(format_args!("sw {}, {}", reg_name, addr))
     }
 }

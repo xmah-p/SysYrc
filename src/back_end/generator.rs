@@ -16,8 +16,8 @@ pub trait GenerateRiscv {
 impl GenerateRiscv for Program {
     fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result {
         context.program = Some(self);
-        context.write_inst(".text")?;
-        context.write_inst(".globl main")?;
+        context.write_line(".text")?;
+        context.write_line(".globl main")?;
 
         for &func in self.func_layout() {
             let func_data: &FunctionData = self.func(func);
@@ -37,13 +37,7 @@ impl GenerateRiscv for FunctionData {
 
         // Stack frame setup
         context.init_stack_frame();
-        let stack_size = context.get_stack_size();
-        if stack_size > 2047 {
-            context.write_inst(&format!("li t0, {}", stack_size))?;
-            context.write_inst(&format!("add sp, sp, t0"))?;
-        } else if stack_size > 0 {
-            context.write_inst(&format!("addi sp, sp, -{}", stack_size))?;
-        }
+        context.generate_prologue()?;
 
         // Generate code for each basic block
         for (&bb, node) in self.layout().bbs() {
@@ -72,19 +66,10 @@ impl GenerateRiscv for ValueData {
                 let Some(ret_value) = value.value() else {
                     panic!("Unsupported return instruction without value");
                 };
+
                 context.load_value_to_reg(ret_value, "a0")?;
-
-                // Function epilogue
-                let stack_size = context.get_stack_size();
-
-                if stack_size > 2047 {
-                    context.write_inst(&format!("li t0, {}", stack_size))?;
-                    context.write_inst(&format!("add sp, sp, t0"))?;
-                } else if stack_size > 0 {
-                    context.write_inst(&format!("addi sp, sp, {}", stack_size))?;
-                }
-
-                context.write_inst("ret")?;
+                context.generate_epilogue()?;
+                context.write_inst(format_args!("ret"))?;
             }
 
             ValueKind::Binary(bin) => {
@@ -94,22 +79,22 @@ impl GenerateRiscv for ValueData {
                 let op_str = map_binary_op(bin.op());
                 if let Some(op) = op_str {
                     match op {
-                        "seqz" => context.write_inst(&format!("{} t0, t0", op))?,
-                        "snez" => context.write_inst(&format!("{} t0, t0", op))?,
-                        _ => context.write_inst(&format!("{} t0, t0, t1", op))?,
+                        "seqz" => context.write_inst(format_args!("{} t0, t0", op))?,
+                        "snez" => context.write_inst(format_args!("{} t0, t0", op))?,
+                        _ => context.write_inst(format_args!("{} t0, t0, t1", op))?,
                     }
                 } else {
                     // Handle le and ge
                     match bin.op() {
                         KoopaBinaryOp::Le => {
                             // t0 = (lhs <= rhs) <=> t0 = !(lhs > rhs)
-                            context.write_inst("slt t0, t1, t0")?;
-                            context.write_inst("xori t0, t0, 1")?;
+                            context.write_inst(format_args!("slt t0, t1, t0"))?;
+                            context.write_inst(format_args!("xori t0, t0, 1"))?;
                         }
                         KoopaBinaryOp::Ge => {
                             // t0 = (lhs >= rhs) <=> t0 = !(lhs < rhs)
-                            context.write_inst("slt t0, t0, t1")?;
-                            context.write_inst("xori t0, t0, 1")?;
+                            context.write_inst(format_args!("slt t0, t0, t1"))?;
+                            context.write_inst(format_args!("xori t0, t0, 1"))?;
                         }
                         _ => {
                             panic!("Unsupported binary operation in RISC-V generation");
@@ -131,11 +116,11 @@ impl GenerateRiscv for ValueData {
                 let offset = context.get_stack_offset(dest);
                 context.load_value_to_reg(value, "t0")?;
                 if offset > 2047 {
-                    context.write_inst(&format!("li t1, {}", offset))?;
-                    context.write_inst(&format!("add t1, sp, t1"))?;
-                    context.write_inst("sw t0, 0(t1)")?;
+                    context.write_inst(format_args!("li t1, {}", offset))?;
+                    context.write_inst(format_args!("add t1, sp, t1"))?;
+                    context.write_inst(format_args!("sw t0, 0(t1)"))?;
                 } else {
-                    context.write_inst(&format!("sw t0, {}(sp)", offset))?;
+                    context.write_inst(format_args!("sw t0, {}(sp)", offset))?;
                 }
             }
 
@@ -143,11 +128,11 @@ impl GenerateRiscv for ValueData {
                 let src = load.src();
                 let offset = context.get_stack_offset(src);
                 if offset > 2047 {
-                    context.write_inst(&format!("li t0, {}", offset))?;
-                    context.write_inst(&format!("add t0, sp, t0"))?;
-                    context.write_inst("lw t0, 0(t0)")?;
+                    context.write_inst(format_args!("li t0, {}", offset))?;
+                    context.write_inst(format_args!("add t0, sp, t0"))?;
+                    context.write_inst(format_args!("lw t0, 0(t0)"))?;
                 } else {
-                    context.write_inst(&format!("lw t0, {}(sp)", offset))?;
+                    context.write_inst(format_args!("lw t0, {}(sp)", offset))?;
                 }
                 context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
             } 
