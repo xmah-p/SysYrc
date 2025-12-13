@@ -28,6 +28,12 @@ impl GenerateKoopa for FuncDef {
         let func = context.program.new_func(func_data);
         context.set_current_func(func);
 
+        // Create entry basic block
+        let entry_bb: BasicBlock = context.new_bb().basic_block(Some("%entry".into()));
+        context.add_bb(entry_bb);
+        context.set_current_bb(entry_bb);
+
+        // Generate function body
         context.symbol_table.enter_scope();
         self.block.generate(context);
         context.symbol_table.exit_scope();
@@ -36,10 +42,6 @@ impl GenerateKoopa for FuncDef {
 
 impl GenerateKoopa for Block {
     fn generate(&self, context: &mut KoopaContext) -> () {
-        let entry_bb: BasicBlock = context.new_bb().basic_block(Some("%entry".into()));
-        context.add_bb(entry_bb);
-        context.set_current_bb(entry_bb);
-
         for item in &self.items {
             match item {
                 BlockItem::Stmt(stmt) => stmt.generate(context),
@@ -74,7 +76,11 @@ impl GenerateKoopa for Decl {
         // Save its address in symbol table
         else {
             init_value = context.new_value().alloc(var_type);
-            context.set_value_name(init_value, name.clone());
+            // Koopa IR value names must be unique
+            // We append "_level" to variable names to distinguish variables 
+            // with the same name in different scopes
+            let unique_name = format!("{}_{}", name, context.symbol_table.level());
+            context.set_value_name(init_value, unique_name);
 
             context.add_inst(init_value);
             if let Some(expr) = &self.init_expr {
@@ -113,6 +119,16 @@ impl GenerateKoopa for Stmt {
                         context.add_inst(store_inst);
                     }
                 }
+            }
+            Stmt::Expression { expr } => {
+                if let Some(expr) = expr {
+                    let _ = expr.generate(context);
+                }
+            }
+            Stmt::Block { block } => {
+                context.symbol_table.enter_scope();
+                block.generate(context);
+                context.symbol_table.exit_scope();
             }
         }
     }

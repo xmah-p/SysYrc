@@ -23,6 +23,8 @@ use crate::ast::*;
 
 // Stmt        ::= "return" [Exp] ";";
 //                 | LVal "=" Exp ";";
+//                 | [Exp] ";";
+//                 | Block;
 
 // Exp         ::= LOrExp;
 // PrimaryExp  ::= "(" Exp ")" | Number;
@@ -152,6 +154,9 @@ Stmt: Stmt = {
         lval: lval,
         expr: expr,
     },
+    ";" => Stmt::Expression { expr: None },
+    <expr: Expr> ";" => Stmt::Expression { expr: Some(expr) },
+    <block: Block> => Stmt::Block { block: block },
 };
 
 // ==============================================

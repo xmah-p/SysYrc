@@ -38,6 +38,12 @@ pub enum Stmt {
         lval: String,
         expr: Expr,
     },
+    Expression {
+        expr: Option<Expr>,
+    },
+    Block {
+        block: Block,
+    },
 }
 
 #[derive(Debug)]

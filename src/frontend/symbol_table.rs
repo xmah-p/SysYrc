@@ -19,6 +19,7 @@ pub enum VariableInfo {
 /// Top-level table has None as outer
 /// Only the most inner table is owned by KoopaContext
 pub struct SymbolTable {
+    level: i32,                              // Scope level for variable shadowing   
     table: HashMap<String, VariableInfo>,    // Symbol names start with `@` or `%`
     outer: Option<Box<SymbolTable>>,
 }
@@ -28,8 +29,13 @@ impl SymbolTable {
     pub fn new() -> Self {
         SymbolTable {
             table: HashMap::new(),
+            level: 0,
             outer: None,
         }
+    }
+
+    pub fn level(&self) -> i32 {
+        self.level
     }
 
     pub fn lookup(&self, name: &str) -> Option<VariableInfo> {
@@ -54,6 +60,7 @@ impl SymbolTable {
     pub fn enter_scope(&mut self) {
         let new_table = SymbolTable {
             table: HashMap::new(),
+            level: self.level + 1,
             outer: Some(Box::new(std::mem::replace(self, SymbolTable::new()))),
         };
         *self = new_table;
