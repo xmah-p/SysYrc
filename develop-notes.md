@@ -266,12 +266,8 @@ impl ValueBuilder for LocalBuilder<'_> {
 - Buffered read and write?
 - Instruction Set Structure
 - Function-level Streaming
-- 栈长度超过 2047 字节时，通过 t0 寄存器计算偏移
-  - 这出现在函数 prologue/epilogue 以及 load/store 指令中
-- self.write_inst(&format!(...))。 这会先在堆上分配一个新的 String，传引用进去，写完后立即销毁
-  - 使用 format_args!
 
-
+return 语句貌似支持无 expr 的形式。但是因为目前只有 int 类型的函数，这个功能尚未被测试到。
 
 
 

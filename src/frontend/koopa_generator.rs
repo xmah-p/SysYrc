@@ -1,8 +1,8 @@
 use core::panic;
 
-use crate::ast::{*, BinaryOp as AstBinaryOp};
-use crate::frontend::{symbol_table::VariableInfo, koopa_context::KoopaContext};
-use koopa::ir::{*, builder_traits::*, values::BinaryOp as KoopaBinaryOp};
+use crate::ast::{BinaryOp as AstBinaryOp, *};
+use crate::frontend::{koopa_context::KoopaContext, symbol_table::VariableInfo};
+use koopa::ir::{builder_traits::*, values::BinaryOp as KoopaBinaryOp, *};
 
 /// Trait for generating Koopa IR entities
 pub trait GenerateKoopa {
@@ -91,9 +91,11 @@ impl GenerateKoopa for Stmt {
     fn generate(&self, context: &mut KoopaContext) -> () {
         match self {
             Stmt::Return { expr } => {
-                let value: Value = expr.generate(context);
-                let inst: Value = context.new_value().ret(Some(value));
-                context.add_inst(inst);
+                if let Some(expr) = expr {
+                    let value: Value = expr.generate(context);
+                    let inst: Value = context.new_value().ret(Some(value));
+                    context.add_inst(inst);
+                }
             }
             Stmt::Assign { lval, expr } => {
                 let var_name = format!("@{}", lval);
@@ -172,9 +174,7 @@ impl Expr {
 
     fn generate(&self, context: &mut KoopaContext) -> Value {
         match self {
-            Expr::Number(n) => {
-                context.new_value().integer(*n)
-            }
+            Expr::Number(n) => context.new_value().integer(*n),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_value = lhs.generate(context);
                 let rhs_value = rhs.generate(context);

@@ -8,8 +8,6 @@ use std::fmt;
 /// within the context remain valid during the generation process
 pub trait GenerateRiscv {
     // fmt::Result is an alias for Result<(), fmt::Error>
-    // Lifetime parameter 'a ensures that the context
-    // lives at least as long as the data being generated
     fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result;
 }
 
@@ -41,7 +39,7 @@ impl GenerateRiscv for FunctionData {
 
         // Generate code for each basic block
         for (&bb, node) in self.layout().bbs() {
-            // node is a BasicBlockNode
+            // node is a &BasicBlockNode
             let bb_name = self.dfg().bb(bb).name().as_ref().unwrap().replace("%", "");
             context.write_line(&format!("{}:", bb_name))?;
 
@@ -107,11 +105,10 @@ impl GenerateRiscv for ValueData {
             }
 
             ValueKind::Alloc(_) => {
-                // Allocation handled in stack frame setup
-                // does nothing
+                // Allocation handled in stack frame setup.
+                // Does nothing here
             }
 
-            // store %1, @x
             ValueKind::Store(store) => {
                 let value = store.value();
                 let dest = store.dest();
@@ -142,8 +139,7 @@ impl GenerateRiscv for ValueData {
 
 fn map_binary_op(op: KoopaBinaryOp) -> Option<&'static str> {
     match op {
-        // Except for seqz and snez, the rest are in the form:
-        // op rd, rs1, rs2
+        // All instructions are in the format `op rd, rs1, rs2`
         KoopaBinaryOp::Add => Some("add"),
         KoopaBinaryOp::Sub => Some("sub"),
         KoopaBinaryOp::Mul => Some("mul"),

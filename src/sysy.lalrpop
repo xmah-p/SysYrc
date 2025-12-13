@@ -4,15 +4,6 @@ use crate::ast::*;
 
 // grammar rules:
 // CompUnit    ::= FuncDef;
-// 
-// FuncDef     ::= FuncType IDENT "(" ")" Block;
-// FuncType    ::= "int";
-// 
-// Block         ::= "{" {BlockItem} "}";
-// BlockItem     ::= Decl | Stmt;
-
-// Stmt        ::= "return" Exp ";";
-//                 | LVal "=" Exp ";";
 
 // Decl          ::= ConstDecl | VarDecl;
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
@@ -23,6 +14,15 @@ use crate::ast::*;
 // VarDecl       ::= BType VarDef {"," VarDef} ";";
 // VarDef        ::= IDENT ["=" InitVal];
 // InitVal       ::= Exp;
+
+// FuncDef     ::= FuncType IDENT "(" ")" Block;
+// FuncType    ::= "int";
+
+// Block         ::= "{" {BlockItem} "}";
+// BlockItem     ::= Decl | Stmt;
+
+// Stmt        ::= "return" [Exp] ";";
+//                 | LVal "=" Exp ";";
 
 // Exp         ::= LOrExp;
 // PrimaryExp  ::= "(" Exp ")" | Number;
@@ -146,7 +146,8 @@ Comma<T>: Vec<T> = {
 };
 
 Stmt: Stmt = {
-    "return" <expr: Expr> ";" => Stmt::Return { expr },
+    "return" <expr: Expr> ";" => Stmt::Return { expr: Some(expr) },
+    "return" ";" => Stmt::Return { expr: None },
     <lval: LVal> "=" <expr: Expr> ";" => Stmt::Assign {
         lval: lval,
         expr: expr,

@@ -33,7 +33,7 @@ pub struct Decl {
 
 #[derive(Debug)]
 pub enum Stmt {
-    Return { expr: Expr },
+    Return { expr: Option<Expr> },
     Assign {
         lval: String,
         expr: Expr,

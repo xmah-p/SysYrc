@@ -64,7 +64,8 @@ impl<'a> RiscvContext<'a> {
             .func(func.expect("Current function is not set in RiscvContext"))
     }
 
-    /// If offset exceeds 12-bit immediate range, prepare the address in tmp_reg
+    /// If offset exceeds 12-bit immediate range, prepares the address in tmp_reg.
+    /// Does nothing if offset is within range
     pub fn prepare_addr(&mut self, offset: i32, tmp_reg: &str) -> fmt::Result {
         if offset > MAX_IMM_12 {
             self.write_inst(format_args!("li {}, {}", tmp_reg, offset))?;
@@ -73,6 +74,10 @@ impl<'a> RiscvContext<'a> {
         Ok(())
     }
 
+    /// Gets the address string for load/store instructions
+    /// For offsets within 12-bit immediate range, returns "offset(sp)"
+    /// For larger offsets, returns "0(tmp_reg)". In this case, tmp_reg should 
+    /// hold the computed address (which can be prepared using `prepare_addr`).
     pub fn get_addr_str(&self, offset: i32, tmp_reg: &str) -> String {
         if offset > MAX_IMM_12 {
             format!("0({})", tmp_reg)
@@ -92,7 +97,8 @@ impl<'a> RiscvContext<'a> {
         for (&_bb, node) in func.layout().bbs() {
             for &inst in node.insts().keys() {
                 let inst_data: &ValueData = func.dfg().value(inst);
-                // [TODO]: Assume `alloc` instructions always allocate 4 bytes for now
+                // Assume `alloc` instructions always allocate 4 bytes for now
+                // [TODO] Should be extended for other types later
                 if !inst_data.ty().is_unit() {
                     self.values_map.insert(inst, stack_size);
                     stack_size += WORD_SIZE; // Assuming each non-unit value takes 4 bytes
