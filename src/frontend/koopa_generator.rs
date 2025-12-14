@@ -29,7 +29,7 @@ impl GenerateKoopa for FuncDef {
         context.set_current_func(func);
 
         // Create entry basic block
-        let entry_bb: BasicBlock = context.new_bb().basic_block(Some("%entry".into()));
+        let entry_bb: BasicBlock = context.new_bb("%entry");
         context.add_bb(entry_bb);
         context.set_current_bb(entry_bb);
 
@@ -137,10 +137,10 @@ impl GenerateKoopa for Stmt {
             } => {
                 let cond_value = cond.generate(context);
                 let has_else: bool = else_body.is_some();
-                let then_bb = context.new_bb().basic_block(Some("%then".into()));
-                let end_bb = context.new_bb().basic_block(Some("%end".into()));
+                let then_bb = context.new_bb("%then");
+                let end_bb = context.new_bb("%end");
                 let else_bb = if has_else {
-                    context.new_bb().basic_block(Some("%else".into()))
+                    context.new_bb("%else")
                 } else {
                     end_bb
                 };

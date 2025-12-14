@@ -1,4 +1,4 @@
-use koopa::ir::builder::{BlockBuilder, LocalBuilder};
+use koopa::ir::builder::{BasicBlockBuilder, LocalBuilder};
 use koopa::ir::entities::{ValueData, ValueKind};
 use koopa::ir::*;
 
@@ -10,6 +10,7 @@ pub struct KoopaContext<'a> {
     pub symbol_table: SymbolTable,
     current_func: Option<Function>,
     current_bb: Option<BasicBlock>,
+    bb_count: usize, // For generating unique basic block names
 }
 
 impl<'a> KoopaContext<'a> {
@@ -19,6 +20,7 @@ impl<'a> KoopaContext<'a> {
             current_func: None,
             current_bb: None,
             symbol_table: SymbolTable::new(),
+            bb_count: 0,
         }
     }
 
@@ -110,7 +112,9 @@ impl<'a> KoopaContext<'a> {
 
     /// Creates a new basic block in the DFG of func
     /// Returns a BasicBlockBuilder for the newly created basic block
-    pub fn new_bb(&mut self) -> BlockBuilder {
-        self.current_func_mut().dfg_mut().new_bb()
+    pub fn new_bb(&mut self, name_prefix: &str) -> BasicBlock {
+        let name = format!("{}_{}", name_prefix, self.bb_count);
+        self.bb_count += 1;
+        self.current_func_mut().dfg_mut().new_bb().basic_block(Some(name))
     }
 }
