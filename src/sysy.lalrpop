@@ -147,7 +147,16 @@ Comma<T>: Vec<T> = {
     }
 };
 
+// ==============================================
+// Statement
+// ==============================================
+
 Stmt: Stmt = {
+    MatchedStmt,
+    OpenStmt,
+}
+
+MatchedStmt: Stmt = {
     "return" <expr: Expr> ";" => Stmt::Return { expr: Some(expr) },
     "return" ";" => Stmt::Return { expr: None },
     <lval: LVal> "=" <expr: Expr> ";" => Stmt::Assign {
@@ -157,7 +166,35 @@ Stmt: Stmt = {
     ";" => Stmt::Expression { expr: None },
     <expr: Expr> ";" => Stmt::Expression { expr: Some(expr) },
     <block: Block> => Stmt::Block { block: block },
+    "if" "(" <cond: Expr> ")" <then_body: MatchedStmt> "else" <else_body: MatchedStmt> => Stmt::If {
+        cond,
+        then_body: Box::new(then_body),
+        else_body: Some(Box::new(else_body)),
+    },
 };
+
+OpenStmt: Stmt = {
+    // Case A: No else
+    // Only when there's no else, we can allow then_body to be OpenStmt
+    "if" "(" <cond: Expr> ")" <then_body: Stmt> => {
+        Stmt::If {
+            cond,
+            then_body: Box::new(then_body),
+            else_body: None,
+        }
+    },
+
+    // Case B: With else, but else_body is OpenStmt
+    // then_body must be MatchedStmt here, otherwise else would be parsed as belonging to then_body
+    // instead of the current if.
+    "if" "(" <cond: Expr> ")" <then_body: MatchedStmt> "else" <else_body: OpenStmt> => {
+        Stmt::If {
+            cond,
+            then_body: Box::new(then_body),
+            else_body: Some(Box::new(else_body)),
+        }
+    }
+}
 
 // ==============================================
 // Expression

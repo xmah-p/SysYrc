@@ -10,7 +10,7 @@ docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/comp
 autotest -koopa -s lv1 /root/compiler
 
 cargo run -- -koopa hello.c -o hello.s
-cargo run -- -riscv hello.c -o hello.s
+cargo run -- -riscv hello.c -o hello.o
 
 ```
 

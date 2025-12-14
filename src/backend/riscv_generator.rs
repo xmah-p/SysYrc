@@ -129,6 +129,28 @@ impl GenerateRiscv for ValueData {
 
                 context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
             }
+
+            ValueKind::Branch(branch) => {
+                let cond = branch.cond();
+                let true_bb = branch.true_bb();
+                let false_bb = branch.false_bb();
+
+                context.load_value_to_reg(cond, "t0")?;
+                let true_bb_name = context.get_bb_name(true_bb);
+                let false_bb_name = context.get_bb_name(false_bb);
+                context.write_inst(format_args!(
+                    "bnez t0, {}",
+                    true_bb_name
+                ))?;
+                context.write_inst(format_args!("j {}", false_bb_name))?;
+            }
+
+            ValueKind::Jump(jump) => {
+                let target_bb = jump.target();
+                let target_bb_name = context.get_bb_name(target_bb);
+                context.write_inst(format_args!("j {}", target_bb_name))?;
+            }
+
             _ => {
                 panic!("Unsupported instruction in RISC-V generation");
             }

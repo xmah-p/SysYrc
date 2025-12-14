@@ -77,7 +77,7 @@ impl GenerateKoopa for Decl {
         else {
             init_value = context.new_value().alloc(var_type);
             // Koopa IR value names must be unique
-            // We append "_level" to variable names to distinguish variables 
+            // We append "_level" to variable names to distinguish variables
             // with the same name in different scopes
             let unique_name = format!("{}_{}", name, context.symbol_table.level());
             context.set_value_name(init_value, unique_name);
@@ -129,6 +129,54 @@ impl GenerateKoopa for Stmt {
                 context.symbol_table.enter_scope();
                 block.generate(context);
                 context.symbol_table.exit_scope();
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let cond_value = cond.generate(context);
+                let has_else: bool = else_body.is_some();
+                let then_bb = context.new_bb().basic_block(Some("%then".into()));
+                let end_bb = context.new_bb().basic_block(Some("%end".into()));
+                let else_bb = if has_else {
+                    context.new_bb().basic_block(Some("%else".into()))
+                } else {
+                    end_bb
+                };
+
+                let branch_inst = context.new_value().branch(
+                    cond_value, then_bb, else_bb, // If no else body, jump to end_bb directly
+                );
+                context.add_inst(branch_inst);
+
+                // Then body
+                context.add_bb(then_bb);
+                context.set_current_bb(then_bb);
+                then_body.generate(context);
+                // Check if then_bb already ends with a jump/branch/ret
+                // If not, we need to add a jump to the end_bb
+                if !context.is_current_bb_terminated() {
+                    let jump_to_merge_from_then = context.new_value().jump(end_bb);
+                    context.add_inst(jump_to_merge_from_then);
+                }
+                // Else body
+                if let Some(else_body) = else_body {
+                    context.add_bb(else_bb);
+                    context.set_current_bb(else_bb);
+                    else_body.generate(context);
+                    // It is necessary to jump to the end block after else body
+                    // even if they are adjacent, because Koopa IR basic blocks
+                    // must end with ret/branch/jump instructions
+                    if !context.is_current_bb_terminated() {
+                        let jump_to_merge_from_else = context.new_value().jump(end_bb);
+                        context.add_inst(jump_to_merge_from_else);
+                    }
+                }
+
+                // End block
+                context.add_bb(end_bb);
+                context.set_current_bb(end_bb);
             }
         }
     }

@@ -44,6 +44,11 @@ pub enum Stmt {
     Block {
         block: Block,
     },
+    If {
+        cond: Expr,
+        then_body: Box<Stmt>,    // Boxed to avoid recursive size issues
+        else_body: Option<Box<Stmt>>,
+    }
 }
 
 #[derive(Debug)]

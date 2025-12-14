@@ -64,6 +64,17 @@ impl<'a> RiscvContext<'a> {
             .func(func.expect("Current function is not set in RiscvContext"))
     }
 
+    /// Gets the name of the basic block, removing the '%' prefix
+    pub fn get_bb_name(&self, bb: BasicBlock) -> String {
+        let func = Self::func_data(self.program, self.current_func);
+        func.dfg()
+            .bb(bb)
+            .name()
+            .as_ref()
+            .unwrap()
+            .replace("%", "")
+    }
+
     /// If offset exceeds 12-bit immediate range, prepares the address in tmp_reg.
     /// Does nothing if offset is within range
     pub fn prepare_addr(&mut self, offset: i32, tmp_reg: &str) -> fmt::Result {
