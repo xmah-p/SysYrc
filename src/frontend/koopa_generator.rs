@@ -43,6 +43,11 @@ impl GenerateKoopa for FuncDef {
 impl GenerateKoopa for Block {
     fn generate(&self, context: &mut KoopaContext) -> () {
         for item in &self.items {
+            if context.is_current_bb_terminated() {
+                // Dead code elimination: stop generating further instructions
+                // e.g., return 1; return 2; <- the second return is dead code
+                break;
+            }
             match item {
                 BlockItem::Stmt(stmt) => stmt.generate(context),
                 BlockItem::Decl(decl) => decl.generate(context),
@@ -241,37 +246,111 @@ impl Expr {
             Expr::Number(n) => context.new_value().integer(*n),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_value = lhs.generate(context);
-                let rhs_value = rhs.generate(context);
 
-                if let Some(koopa_op) = map_binary_op(*op) {
-                    let inst = context.new_value().binary(koopa_op, lhs_value, rhs_value);
-                    context.add_inst(inst);
-                    inst
-                } else {
-                    // Handles logical and/or
-                    let zero = context.new_value().integer(0);
+                match op {
+                    AstBinaryOp::And => {
+                        // Short-circuiting Logical AND (&&)
+                        // Logic: result = 0; if (lhs != 0) { result = (rhs != 0); }
 
-                    let lhs_bool =
-                        context
-                            .new_value()
-                            .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
-                    context.add_inst(lhs_bool);
+                        // Allocate temporary variable for result, default to 0 (False)
+                        let result_ptr = context.new_value().alloc(Type::get_i32());
+                        context.add_inst(result_ptr);
+                        let zero = context.new_value().integer(0);
+                        let store_zero = context.new_value().store(zero, result_ptr);
+                        context.add_inst(store_zero);
 
-                    let rhs_bool =
-                        context
-                            .new_value()
-                            .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
-                    context.add_inst(rhs_bool);
+                        // Check if LHS is true
+                        let lhs_ne_zero =
+                            context.new_value().binary(KoopaBinaryOp::NotEq, lhs_value, zero);
+                        context.add_inst(lhs_ne_zero);
 
-                    let logic_op = match op {
-                        AstBinaryOp::And => KoopaBinaryOp::And,
-                        AstBinaryOp::Or => KoopaBinaryOp::Or,
-                        _ => unreachable!("Already handled by map_binary_op"),
-                    };
+                        // Create basic blocks
+                        let eval_rhs_bb = context.new_bb("%and_eval_rhs"); // For evaluating the right-hand side
+                        let end_bb = context.new_bb("%and_end"); // End and merge
 
-                    let inst = context.new_value().binary(logic_op, lhs_bool, rhs_bool);
-                    context.add_inst(inst);
-                    inst
+                        // Branch: if LHS is true, evaluate RHS; otherwise go directly to End (result remains 0)
+                        let branch = context.new_value().branch(lhs_ne_zero, eval_rhs_bb, end_bb);
+                        context.add_inst(branch);
+
+                        // RHS evaluation block
+                        context.add_bb(eval_rhs_bb);
+                        context.set_current_bb(eval_rhs_bb);
+
+                        let rhs_value = rhs.generate(context);
+                        let rhs_ne_zero =
+                            context.new_value().binary(KoopaBinaryOp::NotEq, rhs_value, zero);
+                        context.add_inst(rhs_ne_zero);
+                        let store_rhs = context.new_value().store(rhs_ne_zero, result_ptr);
+                        context.add_inst(store_rhs);
+                        let jump = context.new_value().jump(end_bb);
+                        context.add_inst(jump);
+
+                        // End block
+                        context.add_bb(end_bb);
+                        context.set_current_bb(end_bb);
+                        let result = context.new_value().load(result_ptr);
+                        context.add_inst(result);
+                        result
+                    }
+
+                    AstBinaryOp::Or => {
+                        // Short-circuiting Logical OR (||)
+                        // Logic: result = 1; if (lhs == 0) { result = (rhs != 0); }
+
+                        // Allocate temporary variable for result, default to 1 (True)
+                        let result_ptr = context.new_value().alloc(Type::get_i32());
+                        context.add_inst(result_ptr);
+
+                        let one = context.new_value().integer(1);
+                        let store_one = context.new_value().store(one, result_ptr);
+                        context.add_inst(store_one);
+
+                        // Check if LHS is true
+                        let zero = context.new_value().integer(0);
+                        let lhs_ne_zero =
+                            context.new_value().binary(KoopaBinaryOp::NotEq, lhs_value, zero);
+                        context.add_inst(lhs_ne_zero);
+
+                        // Create basic blocks
+                        let eval_rhs_bb = context.new_bb("%or_eval_rhs");
+                        let end_bb = context.new_bb("%or_end");
+
+                        // Branch: if LHS is true, go directly to End (short-circuit, result is 1); otherwise evaluate RHS
+                        let branch = context.new_value().branch(lhs_ne_zero, end_bb, eval_rhs_bb);
+                        context.add_inst(branch);
+
+                        // RHS evaluation block
+                        context.add_bb(eval_rhs_bb);
+                        context.set_current_bb(eval_rhs_bb);
+                        let rhs_value = rhs.generate(context);
+                        let rhs_ne_zero =
+                            context.new_value().binary(KoopaBinaryOp::NotEq, rhs_value, zero);
+                        context.add_inst(rhs_ne_zero);
+                        let store_rhs = context.new_value().store(rhs_ne_zero, result_ptr);
+                        context.add_inst(store_rhs);
+                        let jump = context.new_value().jump(end_bb);
+                        context.add_inst(jump);
+
+                        // End block
+                        context.add_bb(end_bb);
+                        context.set_current_bb(end_bb);
+                        let result = context.new_value().load(result_ptr);
+                        context.add_inst(result);
+                        result
+                    }
+
+                    _ => {
+                        // Normal binary operations (Add, Sub, Eq, ...)
+                        let rhs_value = rhs.generate(context);
+
+                        if let Some(koopa_op) = map_binary_op(*op) {
+                            let inst = context.new_value().binary(koopa_op, lhs_value, rhs_value);
+                            context.add_inst(inst);
+                            inst
+                        } else {
+                            panic!("Unknown binary operator");
+                        }
+                    }
                 }
             }
             Expr::Unary { op, expr } => match op {
