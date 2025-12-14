@@ -106,6 +106,10 @@ impl GenerateKoopa for Stmt {
                     let value: Value = expr.generate(context);
                     let inst: Value = context.new_value().ret(Some(value));
                     context.add_inst(inst);
+                    // Add a basic block after return to avoid generating further instructions
+                    let after_ret_bb = context.new_bb("%after_ret");
+                    context.add_bb(after_ret_bb);
+                    context.set_current_bb(after_ret_bb);
                 }
             }
             Stmt::Assign { lval, expr } => {
