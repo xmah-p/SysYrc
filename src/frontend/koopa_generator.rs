@@ -23,8 +23,11 @@ impl GenerateKoopa for FuncDef {
             FuncType::Int => Type::get_i32(),
         };
 
-        let func_data =
-            FunctionData::new(std::format!("@{}", self.func_name), Vec::new(), func_type);
+        let func_data = FunctionData::new(
+            std::format!("@{}", self.func_name),
+            Vec::new(),
+            func_type.clone(),
+        );
         let func = context.program.new_func(func_data);
         context.set_current_func(func);
 
@@ -36,6 +39,12 @@ impl GenerateKoopa for FuncDef {
         // Generate function body
         context.symbol_table.enter_scope();
         self.block.generate(context);
+        // Default return 0 if no return statement is present
+        if !context.is_current_bb_terminated() && func_type == Type::get_i32() {
+            let zero = context.new_value().integer(0);
+            let ret_inst = context.new_value().ret(Some(zero));
+            context.add_inst(ret_inst);
+        }
         context.symbol_table.exit_scope();
     }
 }
@@ -106,10 +115,6 @@ impl GenerateKoopa for Stmt {
                     let value: Value = expr.generate(context);
                     let inst: Value = context.new_value().ret(Some(value));
                     context.add_inst(inst);
-                    // Add a basic block after return to avoid generating further instructions
-                    let after_ret_bb = context.new_bb("%after_ret");
-                    context.add_bb(after_ret_bb);
-                    context.set_current_bb(after_ret_bb);
                 }
             }
             Stmt::Assign { lval, expr } => {
@@ -265,7 +270,9 @@ impl Expr {
 
                         // Check if LHS is true
                         let lhs_ne_zero =
-                            context.new_value().binary(KoopaBinaryOp::NotEq, lhs_value, zero);
+                            context
+                                .new_value()
+                                .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
                         context.add_inst(lhs_ne_zero);
 
                         // Create basic blocks
@@ -282,7 +289,9 @@ impl Expr {
 
                         let rhs_value = rhs.generate(context);
                         let rhs_ne_zero =
-                            context.new_value().binary(KoopaBinaryOp::NotEq, rhs_value, zero);
+                            context
+                                .new_value()
+                                .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
                         context.add_inst(rhs_ne_zero);
                         let store_rhs = context.new_value().store(rhs_ne_zero, result_ptr);
                         context.add_inst(store_rhs);
@@ -312,7 +321,9 @@ impl Expr {
                         // Check if LHS is true
                         let zero = context.new_value().integer(0);
                         let lhs_ne_zero =
-                            context.new_value().binary(KoopaBinaryOp::NotEq, lhs_value, zero);
+                            context
+                                .new_value()
+                                .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
                         context.add_inst(lhs_ne_zero);
 
                         // Create basic blocks
@@ -328,7 +339,9 @@ impl Expr {
                         context.set_current_bb(eval_rhs_bb);
                         let rhs_value = rhs.generate(context);
                         let rhs_ne_zero =
-                            context.new_value().binary(KoopaBinaryOp::NotEq, rhs_value, zero);
+                            context
+                                .new_value()
+                                .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
                         context.add_inst(rhs_ne_zero);
                         let store_rhs = context.new_value().store(rhs_ne_zero, result_ptr);
                         context.add_inst(store_rhs);

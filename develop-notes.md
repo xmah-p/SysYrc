@@ -270,3 +270,48 @@ impl ValueBuilder for LocalBuilder<'_> {
 
 return 语句貌似支持无 expr 的形式。但是因为目前只有 int 类型的函数，这个功能尚未被测试到。
 
+```
+%after_ret_5:
+  jump %end_2
+
+%end_2:
+  这种情况由于 jump 的存在，需要在 %end_2 处补充指令
+  如果没有 jump，则不需要补充
+```
+
+```
+int main() {
+    if (1) {
+        return 4 + 5;
+    } else {
+        if (0) {
+            return 2;
+        } else {
+            return 3;
+        }
+    }
+}
+// 猜测 13_branch2 应形如以上代码，SysYrc 生成的 Koopa IR 是
+fun @main(): i32 {
+%entry_0:
+  br 1, %then_1, %else_3
+
+%then_1:
+  %0 = add 4, 5
+  ret %0
+
+%else_3:
+  br 0, %then_4, %else_6
+
+%then_4:
+  ret 2
+
+%else_6:
+  ret 3
+
+%end_5:
+  jump %end_2    // 这里导致错误
+
+%end_2:
+}
+```
