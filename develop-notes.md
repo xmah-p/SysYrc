@@ -270,7 +270,16 @@ impl ValueBuilder for LocalBuilder<'_> {
 
 return 语句貌似支持无 expr 的形式。但是因为目前只有 int 类型的函数，这个功能尚未被测试到。
 
+很坑的测试点: multiple returns
+```c
+int main() {
+  return 5;
+  return 4;
+  return 3;
+}
 ```
+
+```asm
 %after_ret_5:
   jump %end_2
 
@@ -279,7 +288,7 @@ return 语句貌似支持无 expr 的形式。但是因为目前只有 int 类�
   如果没有 jump，则不需要补充
 ```
 
-```
+```c
 int main() {
     if (1) {
         return 4 + 5;
@@ -315,3 +324,5 @@ fun @main(): i32 {
 %end_2:
 }
 ```
+
+解决方法：为 int 返回类型函数添加 default return 0

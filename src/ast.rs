@@ -48,7 +48,13 @@ pub enum Stmt {
         cond: Expr,
         then_body: Box<Stmt>,    // Boxed to avoid recursive size issues
         else_body: Option<Box<Stmt>>,
-    }
+    },
+    While {
+        cond: Expr,
+        body: Box<Stmt>,
+    },
+    Break,
+    Continue,
 }
 
 #[derive(Debug)]

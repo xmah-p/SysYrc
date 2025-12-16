@@ -166,6 +166,12 @@ MatchedStmt: Stmt = {
     ";" => Stmt::Expression { expr: None },
     <expr: Expr> ";" => Stmt::Expression { expr: Some(expr) },
     <block: Block> => Stmt::Block { block: block },
+    "while" "(" <cond: Expr> ")" <body: MatchedStmt> => Stmt::While {
+        cond,
+        body: Box::new(body),
+    },
+    "break" ";" => Stmt::Break,
+    "continue" ";" => Stmt::Continue,
     "if" "(" <cond: Expr> ")" <then_body: MatchedStmt> "else" <else_body: MatchedStmt> => Stmt::If {
         cond,
         then_body: Box::new(then_body),
@@ -193,7 +199,14 @@ OpenStmt: Stmt = {
             then_body: Box::new(then_body),
             else_body: Some(Box::new(else_body)),
         }
-    }
+    },
+
+    // While is open if its body is open
+    // e.g.: `while (cond) if (cond2) stmt; else stmt2;`
+    "while" "(" <cond: Expr> ")" <body: OpenStmt> => Stmt::While {
+        cond,
+        body: Box::new(body),
+    },
 }
 
 // ==============================================

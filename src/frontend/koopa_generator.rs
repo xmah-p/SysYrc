@@ -116,7 +116,7 @@ impl GenerateKoopa for Stmt {
                     let inst: Value = context.new_value().ret(Some(value));
                     context.add_inst(inst);
                 }
-            }
+            } // Stmt::Return
             Stmt::Assign { lval, expr } => {
                 let var_name = format!("@{}", lval);
                 let addr: VariableInfo = context
@@ -133,22 +133,45 @@ impl GenerateKoopa for Stmt {
                         context.add_inst(store_inst);
                     }
                 }
-            }
+            } // Stmt::Assign
             Stmt::Expression { expr } => {
                 if let Some(expr) = expr {
                     let _ = expr.generate(context);
                 }
-            }
+            } // Stmt::Expression
             Stmt::Block { block } => {
                 context.symbol_table.enter_scope();
                 block.generate(context);
                 context.symbol_table.exit_scope();
-            }
+            } // Stmt::Block
             Stmt::If {
                 cond,
                 then_body,
                 else_body,
             } => {
+                // If (cond) then { ... } else { ... }
+                // will be translated to:
+                // cond calcalation
+                // br cond, then_bb, else_bb
+                // then_bb:
+                //   then_body
+                //   jump end_bb
+                // else_bb:
+                //   else_body
+                //   jump end_bb
+                // end_bb:
+                //   ...
+
+                // Special case: no else
+                // If (cond) then { ... }
+                // will be translated to:
+                // cond calcalation
+                // br cond, then_bb, end_bb
+                // then_bb:
+                //   then_body
+                //   jump end_bb
+                // end_bb:
+                //   ...
                 let cond_value = cond.generate(context);
                 let has_else: bool = else_body.is_some();
                 let then_bb = context.new_bb("%then");
@@ -170,6 +193,8 @@ impl GenerateKoopa for Stmt {
                 then_body.generate(context);
                 // Check if then_bb already ends with a jump/branch/ret
                 // If not, we need to add a jump to the end_bb
+                // The only case then_bb is terminated is when then_body ends
+                // with a return statement
                 if !context.is_current_bb_terminated() {
                     let jump_to_merge_from_then = context.new_value().jump(end_bb);
                     context.add_inst(jump_to_merge_from_then);
@@ -191,7 +216,66 @@ impl GenerateKoopa for Stmt {
                 // End block
                 context.add_bb(end_bb);
                 context.set_current_bb(end_bb);
-            }
+            }  // Stmt::If
+            Stmt::While { cond, body } => {
+                // while (cond) { body }
+                // will be translated to:
+                // jump cond_bb
+                // cond_bb:
+                //   cond calculation
+                //   br cond, body_bb, end_bb
+                // body_bb:
+                //   body
+                //   jump cond_bb
+                // end_bb:
+                //   ...
+
+                let cond_bb = context.new_bb("%while_cond");
+                let body_bb = context.new_bb("%while_body");
+                let end_bb = context.new_bb("%while_end");
+
+                // Initial jump to condition check
+                let initial_jump = context.new_value().jump(cond_bb);
+                context.add_inst(initial_jump);
+
+                // Condition block
+                context.add_bb(cond_bb);
+                context.set_current_bb(cond_bb);
+                let cond_value = cond.generate(context);
+                let branch_inst =
+                    context.new_value().branch(cond_value, body_bb, end_bb);
+                context.add_inst(branch_inst);
+
+                // Body block
+                context.add_bb(body_bb);
+                context.set_current_bb(body_bb);
+                // Push information for break/continue statements before
+                // generating the loop body
+                context.enter_loop(end_bb, cond_bb);
+                body.generate(context);
+                context.exit_loop();
+                // After body, jump back to condition check
+                // The only case current_bb is terminated is when body ends
+                // with a return statement
+                if !context.is_current_bb_terminated() {
+                    let jump_to_cond = context.new_value().jump(cond_bb);
+                    context.add_inst(jump_to_cond);
+                }
+
+                // End block
+                context.add_bb(end_bb);
+                context.set_current_bb(end_bb);
+            } // Stmt::While
+            Stmt::Break => {
+                let target = context.get_current_loop_break_target();
+                let jump_inst = context.new_value().jump(target);
+                context.add_inst(jump_inst);
+            } // Stmt::Break
+            Stmt::Continue => {
+                let target = context.get_current_loop_continue_target();
+                let jump_inst = context.new_value().jump(target);
+                context.add_inst(jump_inst);
+            } // Stmt::Continue
         }
     }
 }

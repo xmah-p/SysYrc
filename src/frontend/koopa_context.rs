@@ -11,6 +11,11 @@ pub struct KoopaContext<'a> {
     current_func: Option<Function>,
     current_bb: Option<BasicBlock>,
     bb_count: usize, // For generating unique basic block names
+    // These two stacks are used to keep track of the current loop's
+    // break and continue targets
+    // For while loops, they should always be operated in pairs
+    loop_break_stack: Vec<BasicBlock>,
+    loop_continue_stack: Vec<BasicBlock>,
 }
 
 impl<'a> KoopaContext<'a> {
@@ -21,6 +26,8 @@ impl<'a> KoopaContext<'a> {
             current_bb: None,
             symbol_table: SymbolTable::new(),
             bb_count: 0,
+            loop_break_stack: Vec::new(),
+            loop_continue_stack: Vec::new(),
         }
     }
 
@@ -62,6 +69,36 @@ impl<'a> KoopaContext<'a> {
         self.current_func_mut()
             .dfg_mut()
             .set_value_name(value, Some(name));
+    }
+
+    /// Pushes the break and continue target basic blocks of the current loop
+    /// onto their respective stacks
+    pub fn enter_loop(&mut self, break_target: BasicBlock, continue_target: BasicBlock) {
+        self.loop_break_stack.push(break_target);
+        self.loop_continue_stack.push(continue_target);
+    }
+
+    /// Pops the break and continue target basic blocks of the current loop
+    /// from their respective stacks
+    pub fn exit_loop(&mut self) {
+        self.loop_break_stack.pop();
+        self.loop_continue_stack.pop();
+    }
+
+    /// Clones and returns the current loop's continue target basic block
+    pub fn get_current_loop_break_target(&self) -> BasicBlock {
+        self.loop_break_stack
+            .last()
+            .expect("No current loop break target found")
+            .clone()
+    }
+
+    /// Clones and returns the current loop's continue target basic block
+    pub fn get_current_loop_continue_target(&self) -> BasicBlock {
+        self.loop_continue_stack
+            .last()
+            .expect("No current loop continue target found")
+            .clone()
     }
 
     pub fn is_current_bb_terminated(&mut self) -> bool {
