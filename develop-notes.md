@@ -330,4 +330,4 @@ fun @main(): i32 {
 
 检查一下符号和符号表，尤其是函数参数的处理。
 
-compute_constexpr 的 lval 很奇怪，查名字查成 @name 居然不出错？
+function call 只应该检查全局符号表？

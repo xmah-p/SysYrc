@@ -17,12 +17,7 @@ impl GenerateKoopa for CompUnit {
 
 impl GenerateKoopa for FuncDef {
     fn generate(&self, ctx: &mut KoopaContext) -> () {
-        let ret_type = match self.func_type {
-            FuncType::Int => Type::get_i32(),
-            FuncType::Void => Type::get_unit(),
-        };
-        let func_symbol_name = format!("@{}", self.func_name);
-
+        // Create and register the function
         let func_params_config: Vec<_> = self
             .params
             .iter()
@@ -33,17 +28,19 @@ impl GenerateKoopa for FuncDef {
                 let name = format!("@{}", param.param_name);
                 (Some(name), ty)
             })
-            .collect();
-
-        // Create and register the function
+            .collect(); // Vector of (param_name, param_type) tuples
+        let ret_type = match self.func_type {
+            FuncType::Int => Type::get_i32(),
+            FuncType::Void => Type::get_unit(),
+        };
         let func_data = FunctionData::with_param_names(
-            func_symbol_name.clone(),
+            format!("@{}", self.func_name),
             func_params_config.clone(),
             ret_type,
         );
         let func = ctx.program.new_func(func_data);
         ctx.set_current_func(func);
-        // Insert the function to symbol table
+        // Insert the function into global symbol table
         ctx.symbol_table
             .insert(self.func_name.clone(), SymbolInfo::Function(func));
 
@@ -52,25 +49,25 @@ impl GenerateKoopa for FuncDef {
         ctx.add_bb(entry_bb);
         ctx.set_current_bb(entry_bb);
 
-        // Set up parameters: alloc & store
-        ctx.symbol_table.enter_scope();
-        for (i, param) in self.params.iter().enumerate() {
-            let param_value = ctx.current_func().params()[i];
+        // Set up stack arguments: alloc & store
+        ctx.symbol_table.enter_scope();    // Enter function scope
+        for (i, arg) in self.params.iter().enumerate() {
+            let value: Value = ctx.current_func().params()[i];
 
-            let ty = match param.param_type {
+            let ty = match arg.param_type {
                 ValueType::Int => Type::get_i32(),
             };
-            let name = format!("%{}", param.param_name);
+            let name = format!("%{}", arg.param_name);
 
             let alloc_inst = ctx.new_value().alloc(ty);
             ctx.set_value_name(alloc_inst, name.clone());
             ctx.add_inst(alloc_inst);
 
-            let store_inst = ctx.new_value().store(param_value, alloc_inst);
+            let store_inst = ctx.new_value().store(value, alloc_inst);
             ctx.add_inst(store_inst);
 
             ctx.symbol_table
-                .insert(param.param_name.clone(), SymbolInfo::Variable(alloc_inst));
+                .insert(arg.param_name.clone(), SymbolInfo::Variable(alloc_inst));
         }
 
         // Generate function body
@@ -88,7 +85,7 @@ impl GenerateKoopa for FuncDef {
             let ret_inst = ctx.new_value().ret(ret_value);
             ctx.add_inst(ret_inst);
         }
-        ctx.symbol_table.exit_scope();
+        ctx.symbol_table.exit_scope();  // Exit function scope
     }
 }
 
@@ -110,12 +107,10 @@ impl GenerateKoopa for Block {
 
 impl GenerateKoopa for Decl {
     fn generate(&self, ctx: &mut KoopaContext) -> () {
-        let name = format!("@{}", self.var_name);
         let var_type = match self.var_type {
             ValueType::Int => Type::get_i32(),
         };
         let is_const = self.constant;
-        let init_value: Value;
 
         // Store variable info in symbol table
         // Constant variable
@@ -126,7 +121,7 @@ impl GenerateKoopa for Decl {
                 .as_ref()
                 .expect("Constant declaration must have an initializer")
                 .compute_constexpr(ctx);
-            init_value = ctx.new_value().integer(result);
+            let init_value = ctx.new_value().integer(result);
             ctx.symbol_table
                 .insert(self.var_name.clone(), SymbolInfo::ConstVariable(init_value));
         }
@@ -134,14 +129,15 @@ impl GenerateKoopa for Decl {
         // Allocate space for the variable and store the initial value if exists
         // Save its address in symbol table
         else {
-            init_value = ctx.new_value().alloc(var_type);
+            let init_value = ctx.new_value().alloc(var_type);
             // Koopa IR value names must be unique
             // We append "_level" to variable names to distinguish variables
             // with the same name in different scopes
-            let unique_name = format!("{}_{}", name, ctx.symbol_table.level());
+            let unique_name = format!("@{}_{}", self.var_name, ctx.symbol_table.level());
             ctx.set_value_name(init_value, unique_name);
 
             ctx.add_inst(init_value);
+            // If there is an initializer, calculate and store the value
             if let Some(expr) = &self.init_expr {
                 let expr_value = expr.generate(ctx);
                 let store_inst = ctx.new_value().store(expr_value, init_value);
@@ -164,11 +160,10 @@ impl GenerateKoopa for Stmt {
                 }
             } // Stmt::Return
             Stmt::Assign { lval, expr } => {
-                let var_name = format!("@{}", lval);
                 let addr: SymbolInfo = ctx
                     .symbol_table
-                    .lookup(&var_name)
-                    .expect("Variable not found in symbol table");
+                    .lookup(lval)
+                    .expect(&format!("Variable {} not found in symbol table", lval));
                 match addr {
                     SymbolInfo::ConstVariable(_) => {
                         panic!("Cannot assign to a constant variable");
@@ -364,11 +359,12 @@ impl Expr {
                     AstBinaryOp::Or => ((left != 0) || (right != 0)) as i32,
                 }
             }
+            // Constant variables are also treated as LVal here
             Expr::LVal(name) => {
                 let addr: SymbolInfo = ctx
                     .symbol_table
                     .lookup(name)
-                    .expect("Variable not found in symbol table");
+                    .expect(&format!("Variable {} not found in symbol table", name));
                 let SymbolInfo::ConstVariable(var) = addr else {
                     panic!("Cannot use non-constant variable in constant expression");
                 };
