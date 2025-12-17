@@ -2,7 +2,7 @@ use koopa::ir::builder::{BasicBlockBuilder, LocalBuilder};
 use koopa::ir::entities::{ValueData, ValueKind};
 use koopa::ir::*;
 
-use crate::frontend::symbol_table::SymbolTable;
+use crate::frontend::symbol_table::*;
 
 /// Context for Koopa IR generation
 pub struct KoopaContext<'a> {
@@ -121,6 +121,41 @@ impl<'a> KoopaContext<'a> {
         }
     }
 
+    /// Declares all SysY library functions in the Koopa IR program
+    /// and inserts them into the global symbol table
+    pub fn register_sysy_lib_functions(&mut self) {
+        // List of SysY library functions to register
+        let i32_type = Type::get_i32();
+        let void_type = Type::get_unit();
+        let i32_ptr_type = Type::get_pointer(i32_type.clone());
+        let sysy_lib_functions = vec![
+            // (name, parameter types, return type)
+            // getint(): i32
+            ("getint", vec![], i32_type.clone()), 
+            // getch(): i32
+            ("getch", vec![], i32_type.clone()),  
+            // getarray(i32*): i32
+            ("getarray", vec![i32_ptr_type.clone()], i32_type.clone()), 
+            // putint(i32): void
+            ("putint", vec![i32_type.clone()], void_type.clone()), 
+            // putch(i32): void
+            ("putch", vec![i32_type.clone()], void_type.clone()), 
+            // putarray(i32, i32*): void
+            ("putarray", vec![i32_type.clone(), i32_ptr_type.clone()], void_type.clone()),
+            // starttime(): void
+            ("starttime", vec![], void_type.clone()), 
+            // stoptime(): void
+            ("stoptime", vec![], void_type.clone()),  
+        ]; // WHY DOESN'T IMPLEMENT COPY FOR TYPE???!!!
+
+        for (name, param_types, ret_type) in sysy_lib_functions {
+            let func_data = FunctionData::new_decl(format!("@{}", name), param_types, ret_type);
+            let func = self.program.new_func(func_data);
+            self.symbol_table
+                .insert(name.to_string(), SymbolInfo::Function(func));
+        }
+    }
+
     /// Pushes basic block `bb` to the end of the basic block list of
     /// the current function
     pub fn add_bb(&mut self, bb: BasicBlock) {
@@ -156,6 +191,9 @@ impl<'a> KoopaContext<'a> {
     pub fn new_bb(&mut self, name_prefix: &str) -> BasicBlock {
         let name = format!("{}_{}", name_prefix, self.bb_count);
         self.bb_count += 1;
-        self.current_func_mut().dfg_mut().new_bb().basic_block(Some(name))
+        self.current_func_mut()
+            .dfg_mut()
+            .new_bb()
+            .basic_block(Some(name))
     }
 }

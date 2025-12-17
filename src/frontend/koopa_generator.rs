@@ -9,6 +9,9 @@ pub trait GenerateKoopa {
 
 impl GenerateKoopa for CompUnit {
     fn generate(&self, ctx: &mut KoopaContext) -> () {
+        // Register all SysY library functions
+        ctx.register_sysy_lib_functions();
+
         for func_def in &self.func_defs {
             func_def.generate(ctx);
         }
