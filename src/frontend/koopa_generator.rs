@@ -1,72 +1,115 @@
-use core::panic;
-
 use crate::ast::{BinaryOp as AstBinaryOp, *};
-use crate::frontend::{koopa_context::KoopaContext, symbol_table::VariableInfo};
+use crate::frontend::{koopa_context::KoopaContext, symbol_table::SymbolInfo};
 use koopa::ir::{builder_traits::*, values::BinaryOp as KoopaBinaryOp, *};
 
 /// Trait for generating Koopa IR entities
 pub trait GenerateKoopa {
-    fn generate(&self, context: &mut KoopaContext) -> ();
+    fn generate(&self, ctx: &mut KoopaContext) -> ();
 }
 
 impl GenerateKoopa for CompUnit {
-    fn generate(&self, context: &mut KoopaContext) -> () {
-        // Currently only supports one function definition
-        let func_def = &self.func_def;
-        func_def.generate(context);
+    fn generate(&self, ctx: &mut KoopaContext) -> () {
+        for func_def in &self.func_defs {
+            func_def.generate(ctx);
+        }
     }
 }
 
 impl GenerateKoopa for FuncDef {
-    fn generate(&self, context: &mut KoopaContext) -> () {
-        let func_type = match self.func_type {
+    fn generate(&self, ctx: &mut KoopaContext) -> () {
+        let ret_type = match self.func_type {
             FuncType::Int => Type::get_i32(),
+            FuncType::Void => Type::get_unit(),
         };
+        let func_symbol_name = format!("@{}", self.func_name);
 
-        let func_data = FunctionData::new(
-            std::format!("@{}", self.func_name),
-            Vec::new(),
-            func_type.clone(),
+        let func_params_config: Vec<_> = self
+            .params
+            .iter()
+            .map(|param| {
+                let ty = match param.param_type {
+                    ValueType::Int => Type::get_i32(),
+                };
+                let name = format!("@{}", param.param_name);
+                (Some(name), ty)
+            })
+            .collect();
+
+        // Create and register the function
+        let func_data = FunctionData::with_param_names(
+            func_symbol_name.clone(),
+            func_params_config.clone(),
+            ret_type,
         );
-        let func = context.program.new_func(func_data);
-        context.set_current_func(func);
+        let func = ctx.program.new_func(func_data);
+        ctx.set_current_func(func);
+        // Insert the function to symbol table
+        ctx.symbol_table
+            .insert(self.func_name.clone(), SymbolInfo::Function(func));
 
         // Create entry basic block
-        let entry_bb: BasicBlock = context.new_bb("%entry");
-        context.add_bb(entry_bb);
-        context.set_current_bb(entry_bb);
+        let entry_bb: BasicBlock = ctx.new_bb("%entry");
+        ctx.add_bb(entry_bb);
+        ctx.set_current_bb(entry_bb);
+
+        // Set up parameters: alloc & store
+        ctx.symbol_table.enter_scope();
+        for (i, param) in self.params.iter().enumerate() {
+            let param_value = ctx.current_func().params()[i];
+
+            let ty = match param.param_type {
+                ValueType::Int => Type::get_i32(),
+            };
+            let name = format!("%{}", param.param_name);
+
+            let alloc_inst = ctx.new_value().alloc(ty);
+            ctx.set_value_name(alloc_inst, name.clone());
+            ctx.add_inst(alloc_inst);
+
+            let store_inst = ctx.new_value().store(param_value, alloc_inst);
+            ctx.add_inst(store_inst);
+
+            ctx.symbol_table
+                .insert(param.param_name.clone(), SymbolInfo::Variable(alloc_inst));
+        }
 
         // Generate function body
-        context.symbol_table.enter_scope();
-        self.block.generate(context);
-        // Default return 0 if no return statement is present
-        if !context.is_current_bb_terminated() && func_type == Type::get_i32() {
-            let zero = context.new_value().integer(0);
-            let ret_inst = context.new_value().ret(Some(zero));
-            context.add_inst(ret_inst);
+        self.block.generate(ctx);
+
+        // Default return if no return statement is present
+        if !ctx.is_current_bb_terminated() {
+            let ret_value = match self.func_type {
+                FuncType::Int => {
+                    let zero = ctx.new_value().integer(0);
+                    Some(zero)
+                }
+                FuncType::Void => None,
+            };
+            let ret_inst = ctx.new_value().ret(ret_value);
+            ctx.add_inst(ret_inst);
         }
-        context.symbol_table.exit_scope();
+        ctx.symbol_table.exit_scope();
     }
 }
 
 impl GenerateKoopa for Block {
-    fn generate(&self, context: &mut KoopaContext) -> () {
+    fn generate(&self, ctx: &mut KoopaContext) -> () {
         for item in &self.items {
-            if context.is_current_bb_terminated() {
+            if ctx.is_current_bb_terminated() {
                 // Dead code elimination: stop generating further instructions
                 // e.g., return 1; return 2; <- the second return is dead code
                 break;
             }
             match item {
-                BlockItem::Stmt(stmt) => stmt.generate(context),
-                BlockItem::Decl(decl) => decl.generate(context),
+                BlockItem::Stmt(stmt) => stmt.generate(ctx),
+                BlockItem::Decl(decl) => decl.generate(ctx),
             }
         }
     }
 }
 
 impl GenerateKoopa for Decl {
-    fn generate(&self, context: &mut KoopaContext) -> () {
+    fn generate(&self, ctx: &mut KoopaContext) -> () {
         let name = format!("@{}", self.var_name);
         let var_type = match self.var_type {
             ValueType::Int => Type::get_i32(),
@@ -82,67 +125,73 @@ impl GenerateKoopa for Decl {
                 .init_expr
                 .as_ref()
                 .expect("Constant declaration must have an initializer")
-                .compute_constexpr(context);
-            init_value = context.new_value().integer(result);
+                .compute_constexpr(ctx);
+            init_value = ctx.new_value().integer(result);
+            ctx.symbol_table
+                .insert(self.var_name.clone(), SymbolInfo::ConstVariable(init_value));
         }
         // Non-constant variable
         // Allocate space for the variable and store the initial value if exists
         // Save its address in symbol table
         else {
-            init_value = context.new_value().alloc(var_type);
+            init_value = ctx.new_value().alloc(var_type);
             // Koopa IR value names must be unique
             // We append "_level" to variable names to distinguish variables
             // with the same name in different scopes
-            let unique_name = format!("{}_{}", name, context.symbol_table.level());
-            context.set_value_name(init_value, unique_name);
+            let unique_name = format!("{}_{}", name, ctx.symbol_table.level());
+            ctx.set_value_name(init_value, unique_name);
 
-            context.add_inst(init_value);
+            ctx.add_inst(init_value);
             if let Some(expr) = &self.init_expr {
-                let expr_value = expr.generate(context);
-                let store_inst = context.new_value().store(expr_value, init_value);
-                context.add_inst(store_inst);
+                let expr_value = expr.generate(ctx);
+                let store_inst = ctx.new_value().store(expr_value, init_value);
+                ctx.add_inst(store_inst);
             }
+            ctx.symbol_table
+                .insert(self.var_name.clone(), SymbolInfo::Variable(init_value));
         }
-        context.symbol_table.insert(name, init_value, is_const);
     }
 }
 
 impl GenerateKoopa for Stmt {
-    fn generate(&self, context: &mut KoopaContext) -> () {
+    fn generate(&self, ctx: &mut KoopaContext) -> () {
         match self {
             Stmt::Return { expr } => {
                 if let Some(expr) = expr {
-                    let value: Value = expr.generate(context);
-                    let inst: Value = context.new_value().ret(Some(value));
-                    context.add_inst(inst);
+                    let value: Value = expr.generate(ctx);
+                    let inst: Value = ctx.new_value().ret(Some(value));
+                    ctx.add_inst(inst);
                 }
             } // Stmt::Return
             Stmt::Assign { lval, expr } => {
                 let var_name = format!("@{}", lval);
-                let addr: VariableInfo = context
+                let addr: SymbolInfo = ctx
                     .symbol_table
                     .lookup(&var_name)
                     .expect("Variable not found in symbol table");
                 match addr {
-                    VariableInfo::ConstVariable(_) => {
+                    SymbolInfo::ConstVariable(_) => {
                         panic!("Cannot assign to a constant variable");
                     }
-                    VariableInfo::Variable(var_addr) => {
-                        let expr_value = expr.generate(context);
-                        let store_inst = context.new_value().store(expr_value, var_addr);
-                        context.add_inst(store_inst);
+                    SymbolInfo::Variable(var_addr) => {
+                        let expr_value = expr.generate(ctx);
+                        let store_inst = ctx.new_value().store(expr_value, var_addr);
+                        ctx.add_inst(store_inst);
+                    }
+                    SymbolInfo::Function(_) => {
+                        unreachable!()
                     }
                 }
             } // Stmt::Assign
             Stmt::Expression { expr } => {
                 if let Some(expr) = expr {
-                    let _ = expr.generate(context);
+                    let _ = expr.generate(ctx);
                 }
             } // Stmt::Expression
             Stmt::Block { block } => {
-                context.symbol_table.enter_scope();
-                block.generate(context);
-                context.symbol_table.exit_scope();
+                ctx.symbol_table.enter_scope();
+                block.generate(ctx);
+                ctx.symbol_table.exit_scope();
             } // Stmt::Block
             Stmt::If {
                 cond,
@@ -172,51 +221,51 @@ impl GenerateKoopa for Stmt {
                 //   jump end_bb
                 // end_bb:
                 //   ...
-                let cond_value = cond.generate(context);
+                let cond_value = cond.generate(ctx);
                 let has_else: bool = else_body.is_some();
-                let then_bb = context.new_bb("%then");
-                let end_bb = context.new_bb("%end");
+                let then_bb = ctx.new_bb("%then");
+                let end_bb = ctx.new_bb("%end");
                 let else_bb = if has_else {
-                    context.new_bb("%else")
+                    ctx.new_bb("%else")
                 } else {
                     end_bb
                 };
 
-                let branch_inst = context.new_value().branch(
+                let branch_inst = ctx.new_value().branch(
                     cond_value, then_bb, else_bb, // If no else body, jump to end_bb directly
                 );
-                context.add_inst(branch_inst);
+                ctx.add_inst(branch_inst);
 
                 // Then body
-                context.add_bb(then_bb);
-                context.set_current_bb(then_bb);
-                then_body.generate(context);
+                ctx.add_bb(then_bb);
+                ctx.set_current_bb(then_bb);
+                then_body.generate(ctx);
                 // Check if then_bb already ends with a jump/branch/ret
                 // If not, we need to add a jump to the end_bb
                 // The only case then_bb is terminated is when then_body ends
                 // with a return statement
-                if !context.is_current_bb_terminated() {
-                    let jump_to_merge_from_then = context.new_value().jump(end_bb);
-                    context.add_inst(jump_to_merge_from_then);
+                if !ctx.is_current_bb_terminated() {
+                    let jump_to_merge_from_then = ctx.new_value().jump(end_bb);
+                    ctx.add_inst(jump_to_merge_from_then);
                 }
                 // Else body
                 if let Some(else_body) = else_body {
-                    context.add_bb(else_bb);
-                    context.set_current_bb(else_bb);
-                    else_body.generate(context);
+                    ctx.add_bb(else_bb);
+                    ctx.set_current_bb(else_bb);
+                    else_body.generate(ctx);
                     // It is necessary to jump to the end block after else body
                     // even if they are adjacent, because Koopa IR basic blocks
                     // must end with ret/branch/jump instructions
-                    if !context.is_current_bb_terminated() {
-                        let jump_to_merge_from_else = context.new_value().jump(end_bb);
-                        context.add_inst(jump_to_merge_from_else);
+                    if !ctx.is_current_bb_terminated() {
+                        let jump_to_merge_from_else = ctx.new_value().jump(end_bb);
+                        ctx.add_inst(jump_to_merge_from_else);
                     }
                 }
 
                 // End block
-                context.add_bb(end_bb);
-                context.set_current_bb(end_bb);
-            }  // Stmt::If
+                ctx.add_bb(end_bb);
+                ctx.set_current_bb(end_bb);
+            } // Stmt::If
             Stmt::While { cond, body } => {
                 // while (cond) { body }
                 // will be translated to:
@@ -230,62 +279,61 @@ impl GenerateKoopa for Stmt {
                 // end_bb:
                 //   ...
 
-                let cond_bb = context.new_bb("%while_cond");
-                let body_bb = context.new_bb("%while_body");
-                let end_bb = context.new_bb("%while_end");
+                let cond_bb = ctx.new_bb("%while_cond");
+                let body_bb = ctx.new_bb("%while_body");
+                let end_bb = ctx.new_bb("%while_end");
 
                 // Initial jump to condition check
-                let initial_jump = context.new_value().jump(cond_bb);
-                context.add_inst(initial_jump);
+                let initial_jump = ctx.new_value().jump(cond_bb);
+                ctx.add_inst(initial_jump);
 
                 // Condition block
-                context.add_bb(cond_bb);
-                context.set_current_bb(cond_bb);
-                let cond_value = cond.generate(context);
-                let branch_inst =
-                    context.new_value().branch(cond_value, body_bb, end_bb);
-                context.add_inst(branch_inst);
+                ctx.add_bb(cond_bb);
+                ctx.set_current_bb(cond_bb);
+                let cond_value = cond.generate(ctx);
+                let branch_inst = ctx.new_value().branch(cond_value, body_bb, end_bb);
+                ctx.add_inst(branch_inst);
 
                 // Body block
-                context.add_bb(body_bb);
-                context.set_current_bb(body_bb);
+                ctx.add_bb(body_bb);
+                ctx.set_current_bb(body_bb);
                 // Push information for break/continue statements before
                 // generating the loop body
-                context.enter_loop(end_bb, cond_bb);
-                body.generate(context);
-                context.exit_loop();
+                ctx.enter_loop(end_bb, cond_bb);
+                body.generate(ctx);
+                ctx.exit_loop();
                 // After body, jump back to condition check
                 // The only case current_bb is terminated is when body ends
                 // with a return statement
-                if !context.is_current_bb_terminated() {
-                    let jump_to_cond = context.new_value().jump(cond_bb);
-                    context.add_inst(jump_to_cond);
+                if !ctx.is_current_bb_terminated() {
+                    let jump_to_cond = ctx.new_value().jump(cond_bb);
+                    ctx.add_inst(jump_to_cond);
                 }
 
                 // End block
-                context.add_bb(end_bb);
-                context.set_current_bb(end_bb);
+                ctx.add_bb(end_bb);
+                ctx.set_current_bb(end_bb);
             } // Stmt::While
             Stmt::Break => {
-                let target = context.get_current_loop_break_target();
-                let jump_inst = context.new_value().jump(target);
-                context.add_inst(jump_inst);
+                let target = ctx.get_current_loop_break_target();
+                let jump_inst = ctx.new_value().jump(target);
+                ctx.add_inst(jump_inst);
             } // Stmt::Break
             Stmt::Continue => {
-                let target = context.get_current_loop_continue_target();
-                let jump_inst = context.new_value().jump(target);
-                context.add_inst(jump_inst);
+                let target = ctx.get_current_loop_continue_target();
+                let jump_inst = ctx.new_value().jump(target);
+                ctx.add_inst(jump_inst);
             } // Stmt::Continue
         }
     }
 }
 
 impl Expr {
-    fn compute_constexpr(&self, context: &KoopaContext) -> i32 {
+    fn compute_constexpr(&self, ctx: &KoopaContext) -> i32 {
         match self {
             Expr::Number(n) => *n,
             Expr::Unary { op, expr } => {
-                let val = expr.compute_constexpr(context);
+                let val = expr.compute_constexpr(ctx);
                 match op {
                     UnaryOp::Pos => val,
                     UnaryOp::Neg => -val,
@@ -294,8 +342,8 @@ impl Expr {
                 }
             }
             Expr::Binary { op, lhs, rhs } => {
-                let left = lhs.compute_constexpr(context);
-                let right = rhs.compute_constexpr(context);
+                let left = lhs.compute_constexpr(ctx);
+                let right = rhs.compute_constexpr(ctx);
                 match op {
                     AstBinaryOp::Add => left + right,
                     AstBinaryOp::Sub => left - right,
@@ -317,28 +365,33 @@ impl Expr {
                 }
             }
             Expr::LVal(name) => {
-                let var_name = format!("@{}", name);
-                let addr: VariableInfo = context
+                let addr: SymbolInfo = ctx
                     .symbol_table
-                    .lookup(&var_name)
+                    .lookup(name)
                     .expect("Variable not found in symbol table");
-                let VariableInfo::ConstVariable(var) = addr else {
+                let SymbolInfo::ConstVariable(var) = addr else {
                     panic!("Cannot use non-constant variable in constant expression");
                 };
-                let v = context.get_value_kind(var);
+                let v = ctx.get_value_kind(var);
                 let ValueKind::Integer(n) = v else {
                     panic!("Constant variable does not hold an integer value");
                 };
                 n.value()
             }
+            Expr::Call {
+                func_name: _,
+                args: _,
+            } => {
+                panic!("Constant variable cannot have function calls");
+            }
         }
     }
 
-    fn generate(&self, context: &mut KoopaContext) -> Value {
+    fn generate(&self, ctx: &mut KoopaContext) -> Value {
         match self {
-            Expr::Number(n) => context.new_value().integer(*n),
+            Expr::Number(n) => ctx.new_value().integer(*n),
             Expr::Binary { op, lhs, rhs } => {
-                let lhs_value = lhs.generate(context);
+                let lhs_value = lhs.generate(ctx);
 
                 match op {
                     AstBinaryOp::And => {
@@ -346,145 +399,161 @@ impl Expr {
                         // Logic: result = 0; if (lhs != 0) { result = (rhs != 0); }
 
                         // Allocate temporary variable for result, default to 0 (False)
-                        let result_ptr = context.new_value().alloc(Type::get_i32());
-                        context.add_inst(result_ptr);
-                        let zero = context.new_value().integer(0);
-                        let store_zero = context.new_value().store(zero, result_ptr);
-                        context.add_inst(store_zero);
+                        let result_ptr = ctx.new_value().alloc(Type::get_i32());
+                        ctx.add_inst(result_ptr);
+                        let zero = ctx.new_value().integer(0);
+                        let store_zero = ctx.new_value().store(zero, result_ptr);
+                        ctx.add_inst(store_zero);
 
                         // Check if LHS is true
                         let lhs_ne_zero =
-                            context
-                                .new_value()
+                            ctx.new_value()
                                 .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
-                        context.add_inst(lhs_ne_zero);
+                        ctx.add_inst(lhs_ne_zero);
 
                         // Create basic blocks
-                        let eval_rhs_bb = context.new_bb("%and_eval_rhs"); // For evaluating the right-hand side
-                        let end_bb = context.new_bb("%and_end"); // End and merge
+                        let eval_rhs_bb = ctx.new_bb("%and_eval_rhs"); // For evaluating the right-hand side
+                        let end_bb = ctx.new_bb("%and_end"); // End and merge
 
                         // Branch: if LHS is true, evaluate RHS; otherwise go directly to End (result remains 0)
-                        let branch = context.new_value().branch(lhs_ne_zero, eval_rhs_bb, end_bb);
-                        context.add_inst(branch);
+                        let branch = ctx.new_value().branch(lhs_ne_zero, eval_rhs_bb, end_bb);
+                        ctx.add_inst(branch);
 
                         // RHS evaluation block
-                        context.add_bb(eval_rhs_bb);
-                        context.set_current_bb(eval_rhs_bb);
+                        ctx.add_bb(eval_rhs_bb);
+                        ctx.set_current_bb(eval_rhs_bb);
 
-                        let rhs_value = rhs.generate(context);
+                        let rhs_value = rhs.generate(ctx);
                         let rhs_ne_zero =
-                            context
-                                .new_value()
+                            ctx.new_value()
                                 .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
-                        context.add_inst(rhs_ne_zero);
-                        let store_rhs = context.new_value().store(rhs_ne_zero, result_ptr);
-                        context.add_inst(store_rhs);
-                        let jump = context.new_value().jump(end_bb);
-                        context.add_inst(jump);
+                        ctx.add_inst(rhs_ne_zero);
+                        let store_rhs = ctx.new_value().store(rhs_ne_zero, result_ptr);
+                        ctx.add_inst(store_rhs);
+                        let jump = ctx.new_value().jump(end_bb);
+                        ctx.add_inst(jump);
 
                         // End block
-                        context.add_bb(end_bb);
-                        context.set_current_bb(end_bb);
-                        let result = context.new_value().load(result_ptr);
-                        context.add_inst(result);
+                        ctx.add_bb(end_bb);
+                        ctx.set_current_bb(end_bb);
+                        let result = ctx.new_value().load(result_ptr);
+                        ctx.add_inst(result);
                         result
-                    }
+                    } // AstBinaryOp::And
 
                     AstBinaryOp::Or => {
                         // Short-circuiting Logical OR (||)
                         // Logic: result = 1; if (lhs == 0) { result = (rhs != 0); }
 
                         // Allocate temporary variable for result, default to 1 (True)
-                        let result_ptr = context.new_value().alloc(Type::get_i32());
-                        context.add_inst(result_ptr);
+                        let result_ptr = ctx.new_value().alloc(Type::get_i32());
+                        ctx.add_inst(result_ptr);
 
-                        let one = context.new_value().integer(1);
-                        let store_one = context.new_value().store(one, result_ptr);
-                        context.add_inst(store_one);
+                        let one = ctx.new_value().integer(1);
+                        let store_one = ctx.new_value().store(one, result_ptr);
+                        ctx.add_inst(store_one);
 
                         // Check if LHS is true
-                        let zero = context.new_value().integer(0);
+                        let zero = ctx.new_value().integer(0);
                         let lhs_ne_zero =
-                            context
-                                .new_value()
+                            ctx.new_value()
                                 .binary(KoopaBinaryOp::NotEq, lhs_value, zero);
-                        context.add_inst(lhs_ne_zero);
+                        ctx.add_inst(lhs_ne_zero);
 
                         // Create basic blocks
-                        let eval_rhs_bb = context.new_bb("%or_eval_rhs");
-                        let end_bb = context.new_bb("%or_end");
+                        let eval_rhs_bb = ctx.new_bb("%or_eval_rhs");
+                        let end_bb = ctx.new_bb("%or_end");
 
                         // Branch: if LHS is true, go directly to End (short-circuit, result is 1); otherwise evaluate RHS
-                        let branch = context.new_value().branch(lhs_ne_zero, end_bb, eval_rhs_bb);
-                        context.add_inst(branch);
+                        let branch = ctx.new_value().branch(lhs_ne_zero, end_bb, eval_rhs_bb);
+                        ctx.add_inst(branch);
 
                         // RHS evaluation block
-                        context.add_bb(eval_rhs_bb);
-                        context.set_current_bb(eval_rhs_bb);
-                        let rhs_value = rhs.generate(context);
+                        ctx.add_bb(eval_rhs_bb);
+                        ctx.set_current_bb(eval_rhs_bb);
+                        let rhs_value = rhs.generate(ctx);
                         let rhs_ne_zero =
-                            context
-                                .new_value()
+                            ctx.new_value()
                                 .binary(KoopaBinaryOp::NotEq, rhs_value, zero);
-                        context.add_inst(rhs_ne_zero);
-                        let store_rhs = context.new_value().store(rhs_ne_zero, result_ptr);
-                        context.add_inst(store_rhs);
-                        let jump = context.new_value().jump(end_bb);
-                        context.add_inst(jump);
+                        ctx.add_inst(rhs_ne_zero);
+                        let store_rhs = ctx.new_value().store(rhs_ne_zero, result_ptr);
+                        ctx.add_inst(store_rhs);
+                        let jump = ctx.new_value().jump(end_bb);
+                        ctx.add_inst(jump);
 
                         // End block
-                        context.add_bb(end_bb);
-                        context.set_current_bb(end_bb);
-                        let result = context.new_value().load(result_ptr);
-                        context.add_inst(result);
+                        ctx.add_bb(end_bb);
+                        ctx.set_current_bb(end_bb);
+                        let result = ctx.new_value().load(result_ptr);
+                        ctx.add_inst(result);
                         result
-                    }
+                    } // AstBinaryOp::Or
 
                     _ => {
                         // Normal binary operations (Add, Sub, Eq, ...)
-                        let rhs_value = rhs.generate(context);
+                        let rhs_value = rhs.generate(ctx);
 
                         if let Some(koopa_op) = map_binary_op(*op) {
-                            let inst = context.new_value().binary(koopa_op, lhs_value, rhs_value);
-                            context.add_inst(inst);
+                            let inst = ctx.new_value().binary(koopa_op, lhs_value, rhs_value);
+                            ctx.add_inst(inst);
                             inst
                         } else {
                             panic!("Unknown binary operator");
                         }
                     }
-                }
-            }
+                } // match op
+            } // Expr::Binary
             Expr::Unary { op, expr } => match op {
-                UnaryOp::Pos => expr.generate(context),
+                UnaryOp::Pos => expr.generate(ctx),
                 UnaryOp::Neg => {
-                    let value = expr.generate(context);
-                    let zero = context.new_value().integer(0);
-                    let inst = context.new_value().binary(KoopaBinaryOp::Sub, zero, value);
-                    context.add_inst(inst);
+                    let value = expr.generate(ctx);
+                    let zero = ctx.new_value().integer(0);
+                    let inst = ctx.new_value().binary(KoopaBinaryOp::Sub, zero, value);
+                    ctx.add_inst(inst);
                     inst
                 }
                 UnaryOp::Not => {
-                    let value = expr.generate(context);
-                    let zero = context.new_value().integer(0);
-                    let inst = context.new_value().binary(KoopaBinaryOp::Eq, value, zero);
-                    context.add_inst(inst);
+                    let value = expr.generate(ctx);
+                    let zero = ctx.new_value().integer(0);
+                    let inst = ctx.new_value().binary(KoopaBinaryOp::Eq, value, zero);
+                    ctx.add_inst(inst);
                     inst
                 }
             },
             Expr::LVal(name) => {
-                let var_name = format!("@{}", name);
-                let addr: VariableInfo = context
+                let addr: SymbolInfo = ctx
                     .symbol_table
-                    .lookup(&var_name)
-                    .expect("Variable not found in symbol table");
+                    .lookup(name)
+                    .expect(&format!("Variable {} not found in symbol table", name));
                 match addr {
-                    VariableInfo::ConstVariable(val) => val,
-                    VariableInfo::Variable(val) => {
-                        let load_inst = context.new_value().load(val);
-                        context.add_inst(load_inst);
+                    SymbolInfo::ConstVariable(val) => val,
+                    SymbolInfo::Variable(val) => {
+                        let load_inst = ctx.new_value().load(val);
+                        ctx.add_inst(load_inst);
                         load_inst
                     }
+                    SymbolInfo::Function(_) => unreachable!(),
                 }
+            }
+            Expr::Call { func_name, args } => {
+                let symbol_info = ctx
+                    .symbol_table
+                    .lookup(func_name)
+                    .expect("Function not found");
+                let SymbolInfo::Function(func) = symbol_info else {
+                    panic!("Symbol is not a function");
+                };
+
+                let mut arg_values = Vec::new();
+                for arg in args {
+                    arg_values.push(arg.generate(ctx));
+                }
+
+                let call_inst = ctx.new_value().call(func, arg_values);
+                ctx.add_inst(call_inst);
+
+                // `void` functions return a unit value
+                call_inst
             }
         }
     }

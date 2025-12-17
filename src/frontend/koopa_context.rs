@@ -47,6 +47,10 @@ impl<'a> KoopaContext<'a> {
 
     pub fn set_current_func(&mut self, func: Function) {
         self.current_func = Some(func);
+        self.bb_count = 0;
+        self.current_bb = None;
+        assert!(self.loop_break_stack.is_empty());
+        assert!(self.loop_continue_stack.is_empty());
     }
 
     pub fn get_current_bb(&self) -> BasicBlock {

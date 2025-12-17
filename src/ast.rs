@@ -2,14 +2,27 @@
 
 #[derive(Debug)]
 pub struct CompUnit {
-    pub func_def: FuncDef,
+    pub func_defs: Vec<FuncDef>,
 }
 
 #[derive(Debug)]
 pub struct FuncDef {
     pub func_type: FuncType,
     pub func_name: String,
+    pub params: Vec<FuncFParam>,
     pub block: Block,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FuncType {
+    Int,
+    Void,
+}
+
+#[derive(Debug)]
+pub struct FuncFParam {
+    pub param_type: ValueType,
+    pub param_name: String,
 }
 
 #[derive(Debug)]
@@ -72,6 +85,10 @@ pub enum Expr {
     // Their values will be resolved during constant expression evaluation
     LVal(String),
     Number(i32),
+    Call {
+        func_name: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,10 +115,7 @@ pub enum UnaryOp {
     Not,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum FuncType {
-    Int,
-}
+
 
 #[derive(Debug, Clone, Copy)]
 pub enum ValueType {

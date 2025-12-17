@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use koopa::ir::{
     Value,
+    Function,
 };
 
 /// Information about a variable in the symbol table
@@ -8,10 +9,13 @@ use koopa::ir::{
 /// We store their Integer values directly.
 /// For non-constant variables, we store pointers to their allocated memory,
 /// i.e., the Value returned by the `alloc` instruction.
+/// For functions, we store the corresponding handles (`Function`)
+/// Note that a function cannot have the same name as a global variable in SysY
 #[derive(Debug, Copy, Clone)]
-pub enum VariableInfo {
+pub enum SymbolInfo {
     ConstVariable(Value),
     Variable(Value),
+    Function(Function),
 }
 
 /// Symbol table for Koopa IR generation
@@ -19,8 +23,8 @@ pub enum VariableInfo {
 /// Top-level table has None as outer
 /// Only the most inner table is owned by KoopaContext
 pub struct SymbolTable {
-    level: i32,                              // Scope level for variable shadowing   
-    table: HashMap<String, VariableInfo>,    // Symbol names start with `@` or `%`
+    level: i32,                            // Scope level for variable shadowing   
+    table: HashMap<String, SymbolInfo>,    // Symbol names DO NOT start with `@` or `%`!
     outer: Option<Box<SymbolTable>>,
 }
 
@@ -38,7 +42,7 @@ impl SymbolTable {
         self.level
     }
 
-    pub fn lookup(&self, name: &str) -> Option<VariableInfo> {
+    pub fn lookup(&self, name: &str) -> Option<SymbolInfo> {
         if let Some(&val) = self.table.get(name) {
             Some(val)
         } else if let Some(outer_table) = &self.outer {
@@ -48,12 +52,7 @@ impl SymbolTable {
         }
     }
 
-    pub fn insert(&mut self, name: String, value: Value, is_const: bool) {
-        let info = if is_const {
-            VariableInfo::ConstVariable(value)
-        } else {
-            VariableInfo::Variable(value)
-        };
+    pub fn insert(&mut self, name: String, info: SymbolInfo) {
         self.table.insert(name, info);
     }
 

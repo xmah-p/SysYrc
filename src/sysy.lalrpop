@@ -52,22 +52,25 @@ match {
 
 
 // Non-teminal: Return Type = Match Pattern => Action Code
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
+pub CompUnit: CompUnit = <func_defs: FuncDef*> => CompUnit { func_defs };
 
 FuncDef: FuncDef = {
-  <func_type: FuncType> <func_name: Ident> "(" ")" <block: Block> => {
-    FuncDef { <> }
-    // This is a macro provided by LALRPOP that automatically expands the names 
-    // of the captures in the rule into fields of the struct.
-    // Equivalent to:
-    // FuncDef {
-    //   func_type,
-    //   func_name,
-    //   block,
-    // }
-  }
+    <func_type: FuncType> <func_name: Ident> "(" <params: Comma<FuncFParam>> ")" <block: Block> => {
+        FuncDef { func_type, func_name, params, block }
+    }
+};
+
+FuncType: FuncType = {
+    "int" => FuncType::Int,
+    "void" => FuncType::Void,
 }
-FuncType: FuncType = "int" => FuncType::Int;
+
+FuncFParam: FuncFParam = {
+    <param_type: ValueType> <param_name: Ident> => FuncFParam {
+        param_type,
+        param_name,
+    }
+}
 
 // ==============================================
 // Block
@@ -89,7 +92,7 @@ Decl: Vec<BlockItem> = {
 }
 
 ConstDecl: Vec<BlockItem> = {
-    "const" <vt: VType> <defs: Comma<ConstDef>> ";" => {
+    "const" <vt: ValueType> <defs: Comma<ConstDef>> ";" => {
         defs.into_iter()
             .map(|(name, init)| BlockItem::Decl( {Decl {
                 constant: true,
@@ -102,7 +105,7 @@ ConstDecl: Vec<BlockItem> = {
 }
 
 VarDecl: Vec<BlockItem> = {
-    <vt: VType> <defs: Comma<VarDef>> ";" => {
+    <vt: ValueType> <defs: Comma<VarDef>> ";" => {
         defs.into_iter()
             .map(|(name, init)| BlockItem::Decl( {Decl {
                 constant: false,
@@ -114,7 +117,7 @@ VarDecl: Vec<BlockItem> = {
     }
 }
 
-VType: ValueType = {
+ValueType: ValueType = {
     "int" => ValueType::Int,
 }
 
@@ -141,10 +144,15 @@ InitVal: Expr = {
 }
 
 Comma<T>: Vec<T> = { 
-    <mut v: (<T> ",")*> <e: T> => {
-        v.push(e);
-        v
-    }
+    // (<T> ",")* 匹配 0 个或多个 "T," 
+    // <e:T?>      匹配 0 个或 1 个 T (处理最后一个没有逗号的情况)
+    <mut v:(<T> ",")*> <e:T?> => match e { 
+        None => v, 
+        Some(e) => { 
+            v.push(e); 
+            v 
+        } 
+    } 
 };
 
 // ==============================================
@@ -307,6 +315,10 @@ UnaryExpr: Expr = {
     <op: UnaryOp> <expr: UnaryExpr> => Expr::Unary {
         op: op,
         expr: Box::new(expr),
+    },
+    <func_name: Ident> "(" <args: Comma<Expr>> ")" => Expr::Call {
+        func_name,
+        args,
     },
     PrimaryExpr,
 };

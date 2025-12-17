@@ -326,3 +326,8 @@ fun @main(): i32 {
 ```
 
 解决方法：为 int 返回类型函数添加 default return 0
+
+
+检查一下符号和符号表，尤其是函数参数的处理。
+
+compute_constexpr 的 lval 很奇怪，查名字查成 @name 居然不出错？
