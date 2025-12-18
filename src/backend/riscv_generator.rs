@@ -15,6 +15,34 @@ impl GenerateRiscv for Program {
     fn generate<'a>(&'a self, ctx: &mut RiscvContext<'a>) -> fmt::Result {
         ctx.program = self;
 
+        ctx.write_inst(format_args!(".data"))?;
+        for &global in self.inst_layout() {
+            let global_data = self.borrow_value(global);
+            let name = global_data.name().as_ref().unwrap().replace("@", "");
+            ctx.write_inst(format_args!(".globl {}", name))?;
+            ctx.write_line(&format!("{}:", name))?;
+            match global_data.kind() {
+                ValueKind::GlobalAlloc(alloc) => {
+                    let init = alloc.init();
+                    let init_data = self.borrow_value(init);
+                    match init_data.kind() {
+                        ValueKind::Integer(int) => {
+                            ctx.write_inst(format_args!(".word {}", int.value()))?;
+                        }
+                        ValueKind::ZeroInit(_) => {
+                            ctx.write_inst(format_args!(".zero {}", WORD_SIZE))?;
+                        }
+                        _ => {
+                            panic!("Unsupported global initializer");
+                        }
+                    }
+                }
+                _ => {
+                    panic!("Unsupported global value kind");
+                }
+            }
+        }
+
         for &func in self.func_layout() {
             let func_data = self.func(func);
             // Skip function declarations (none entry basic block)
@@ -87,7 +115,7 @@ impl GenerateRiscv for ValueData {
 
                 // Save return value if there is one
                 if !self.ty().is_unit() {
-                    ctx.save_reg_to_stack(ctx.current_value.unwrap(), "a0")?;
+                    ctx.save_value_from_reg(ctx.current_value.unwrap(), "a0")?;
                 }
             }
 
@@ -132,7 +160,7 @@ impl GenerateRiscv for ValueData {
                         }
                     }
                 }
-                ctx.save_reg_to_stack(ctx.current_value.unwrap(), "t0")?;
+                ctx.save_value_from_reg(ctx.current_value.unwrap(), "t0")?;
             }
 
             ValueKind::Alloc(_) => {
@@ -143,6 +171,19 @@ impl GenerateRiscv for ValueData {
             ValueKind::Store(store) => {
                 let value = store.value();
                 let dest = store.dest();
+                if dest.is_global() {
+                    let global_name = ctx
+                        .program
+                        .borrow_value(dest)
+                        .name()
+                        .as_ref()
+                        .unwrap()
+                        .replace("@", "");
+                    ctx.load_value_to_reg(value, "t0")?;
+                    ctx.write_inst(format_args!("la t1, {}", global_name))?;
+                    ctx.write_inst(format_args!("sw t0, 0(t1)"))?;
+                    return Ok(());
+                }
                 let offset = ctx.get_stack_offset(dest);
                 ctx.load_value_to_reg(value, "t0")?;
                 ctx.prepare_addr(offset, "t1")?;
@@ -152,13 +193,26 @@ impl GenerateRiscv for ValueData {
 
             ValueKind::Load(load) => {
                 let src = load.src();
-                let offset = ctx.get_stack_offset(src);
+                if src.is_global() {
+                    let global_name = ctx
+                        .program
+                        .borrow_value(src)
+                        .name()
+                        .as_ref()
+                        .unwrap()
+                        .replace("@", "");
+                    ctx.write_inst(format_args!("la t0, {}", global_name))?;
+                    ctx.write_inst(format_args!("lw t0, 0(t0)"))?;
+                    ctx.save_value_from_reg(ctx.current_value.unwrap(), "t0")?;
+                } else {
+                    let offset = ctx.get_stack_offset(src);
 
-                ctx.prepare_addr(offset, "t0")?;
-                let addr: String = ctx.get_addr_str(offset, "t0");
-                ctx.write_inst(format_args!("lw t0, {}", addr))?;
+                    ctx.prepare_addr(offset, "t0")?;
+                    let addr: String = ctx.get_addr_str(offset, "t0");
+                    ctx.write_inst(format_args!("lw t0, {}", addr))?;
 
-                ctx.save_reg_to_stack(ctx.current_value.unwrap(), "t0")?;
+                    ctx.save_value_from_reg(ctx.current_value.unwrap(), "t0")?;
+                }
             }
 
             ValueKind::Branch(branch) => {

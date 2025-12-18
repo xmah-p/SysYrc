@@ -227,6 +227,19 @@ impl<'a> RiscvContext<'a> {
     /// For other values (they should be results of other instructions),
     /// loads from the stack.
     pub fn load_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
+        if value.is_global() {
+            let global_name = self
+                .program
+                .borrow_value(value)
+                .name()
+                .as_ref()
+                .unwrap()
+                .replace("@", "");
+            self.write_inst(format_args!("la {}, {}", reg_name, global_name))?;
+            self.write_inst(format_args!("lw {}, 0({})", reg_name, reg_name))?;
+            return Ok(());
+        }
+
         let value_data = self.get_value_data(value);
 
         match value_data.kind() {
@@ -260,7 +273,20 @@ impl<'a> RiscvContext<'a> {
     }
 
     /// Saves a register value back to the stack for the given Value.
-    pub fn save_reg_to_stack(&mut self, value: Value, reg_name: &str) -> fmt::Result {
+    pub fn save_value_from_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
+        if value.is_global() {
+            let global_name = self
+                .program
+                .borrow_value(value)
+                .name()
+                .as_ref()
+                .unwrap()
+                .replace("@", "");
+            self.write_inst(format_args!("la t0, {}", global_name))?;
+            self.write_inst(format_args!("sw {}, 0(t0)", reg_name))?;
+            return Ok(());
+        }
+        
         if self.get_value_data(value).ty().is_unit() {
             return Ok(());
         }
