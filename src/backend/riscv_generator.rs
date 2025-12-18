@@ -5,50 +5,57 @@ use std::fmt;
 
 /// Trait for generating RISC-V code from Koopa IR entities
 /// The lifetime parameter 'a ensures that any references
-/// within the context remain valid during the generation process
+/// within the ctx remain valid during the generation process
 pub trait GenerateRiscv {
     // fmt::Result is an alias for Result<(), fmt::Error>
-    fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result;
+    fn generate<'a>(&'a self, ctx: &mut RiscvContext<'a>) -> fmt::Result;
 }
 
 impl GenerateRiscv for Program {
-    fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result {
-        context.program = Some(self);
-        context.write_line(".text")?;
-        context.write_line(".globl main")?;
+    fn generate<'a>(&'a self, ctx: &mut RiscvContext<'a>) -> fmt::Result {
+        ctx.program = self;
 
         for &func in self.func_layout() {
-            let func_data: &FunctionData = self.func(func);
-            context.current_func = Some(func);
-            func_data.generate(context)?;
-            context.current_func = None;
+            let func_data = self.func(func);
+            ctx.current_func = Some(func);
+            func_data.generate(ctx)?;
         }
         Ok(())
     }
 }
 
+/// Stack frame layout:
+/// 
+/// Stack frame for previous function
+/// Saved ra
+/// Local variables...
+/// 10th argument
+/// 9th argument
+/// Stack frame for Next function
 impl GenerateRiscv for FunctionData {
-    fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result {
+    fn generate<'a>(&'a self, ctx: &mut RiscvContext<'a>) -> fmt::Result {
         // Function name starts with an '@'
         let name = self.name().replace("@", "");
-        context.write_line(&format!("{}:", name))?;
+        ctx.write_line(".text")?;
+        ctx.write_line(&format!(".globl {}", name))?;
+        ctx.write_line(&format!("{}:", name))?;
 
         // Stack frame setup
-        context.init_stack_frame();
-        context.generate_prologue()?;
+        ctx.init_stack_frame();
+        ctx.generate_prologue()?;
 
         // Generate code for each basic block
         for (&bb, node) in self.layout().bbs() {
             // node is a &BasicBlockNode
-            let bb_name = self.dfg().bb(bb).name().as_ref().unwrap().replace("%", "");
-            context.write_line(&format!("{}:", bb_name))?;
+            let bb_name = ctx.get_bb_name(bb);
+            ctx.write_line(&format!("{}:", bb_name))?;
 
             // Generate code for each instruction in the basic block
             for &inst in node.insts().keys() {
                 // inst is a Value
                 let inst_data = self.dfg().value(inst);
-                context.current_value = Some(inst);
-                inst_data.generate(context)?;
+                ctx.current_value = Some(inst);
+                inst_data.generate(ctx)?;
             }
         }
         Ok(())
@@ -56,7 +63,7 @@ impl GenerateRiscv for FunctionData {
 }
 
 impl GenerateRiscv for ValueData {
-    fn generate<'a>(&'a self, context: &mut RiscvContext<'a>) -> fmt::Result {
+    fn generate<'a>(&'a self, ctx: &mut RiscvContext<'a>) -> fmt::Result {
         match self.kind() {
             ValueKind::Integer(_) => {}
 
@@ -65,43 +72,43 @@ impl GenerateRiscv for ValueData {
                     panic!("Unsupported return instruction without value");
                 };
 
-                context.load_value_to_reg(ret_value, "a0")?;
-                context.generate_epilogue()?;
-                context.write_inst(format_args!("ret"))?;
+                ctx.load_value_to_reg(ret_value, "a0")?;
+                ctx.generate_epilogue()?;
+                ctx.write_inst(format_args!("ret"))?;
             }
 
             ValueKind::Binary(bin) => {
-                context.load_value_to_reg(bin.lhs(), "t0")?;
-                context.load_value_to_reg(bin.rhs(), "t1")?;
+                ctx.load_value_to_reg(bin.lhs(), "t0")?;
+                ctx.load_value_to_reg(bin.rhs(), "t1")?;
 
                 let op_str = map_binary_op(bin.op());
                 match bin.op() {
                     KoopaBinaryOp::Le => {
-                        context.write_inst(format_args!("sgt t0, t0, t1"))?; // t0 = (lhs > rhs)
-                        context.write_inst(format_args!("seqz t0, t0"))?; // t0 = (t0 == 0) => !(lhs > rhs) => lhs <= rhs
+                        ctx.write_inst(format_args!("sgt t0, t0, t1"))?; // t0 = (lhs > rhs)
+                        ctx.write_inst(format_args!("seqz t0, t0"))?; // t0 = (t0 == 0) => !(lhs > rhs) => lhs <= rhs
                     }
                     KoopaBinaryOp::Ge => {
-                        context.write_inst(format_args!("slt t0, t0, t1"))?;
-                        context.write_inst(format_args!("seqz t0, t0"))?;
+                        ctx.write_inst(format_args!("slt t0, t0, t1"))?;
+                        ctx.write_inst(format_args!("seqz t0, t0"))?;
                     }
                     KoopaBinaryOp::Eq => {
-                        context.write_inst(format_args!("xor t0, t0, t1"))?;
-                        context.write_inst(format_args!("seqz t0, t0"))?;
+                        ctx.write_inst(format_args!("xor t0, t0, t1"))?;
+                        ctx.write_inst(format_args!("seqz t0, t0"))?;
                     }
                     KoopaBinaryOp::NotEq => {
-                        context.write_inst(format_args!("xor t0, t0, t1"))?;
-                        context.write_inst(format_args!("snez t0, t0"))?;
+                        ctx.write_inst(format_args!("xor t0, t0, t1"))?;
+                        ctx.write_inst(format_args!("snez t0, t0"))?;
                     }
                     _ => {
                         // Regular binary operations
                         if let Some(op) = op_str {
-                            context.write_inst(format_args!("{} t0, t0, t1", op))?;
+                            ctx.write_inst(format_args!("{} t0, t0, t1", op))?;
                         } else {
                             unreachable!("Unknown binary op");
                         }
                     }
                 }
-                context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
+                ctx.save_value_to_reg(ctx.current_value.unwrap(), "t0")?;
             }
 
             ValueKind::Alloc(_) => {
@@ -112,22 +119,22 @@ impl GenerateRiscv for ValueData {
             ValueKind::Store(store) => {
                 let value = store.value();
                 let dest = store.dest();
-                let offset = context.get_stack_offset(dest);
-                context.load_value_to_reg(value, "t0")?;
-                context.prepare_addr(offset, "t1")?;
-                let addr: String = context.get_addr_str(offset, "t1");
-                context.write_inst(format_args!("sw t0, {}", addr))?;
+                let offset = ctx.get_stack_offset(dest);
+                ctx.load_value_to_reg(value, "t0")?;
+                ctx.prepare_addr(offset, "t1")?;
+                let addr: String = ctx.get_addr_str(offset, "t1");
+                ctx.write_inst(format_args!("sw t0, {}", addr))?;
             }
 
             ValueKind::Load(load) => {
                 let src = load.src();
-                let offset = context.get_stack_offset(src);
+                let offset = ctx.get_stack_offset(src);
 
-                context.prepare_addr(offset, "t0")?;
-                let addr: String = context.get_addr_str(offset, "t0");
-                context.write_inst(format_args!("lw t0, {}", addr))?;
+                ctx.prepare_addr(offset, "t0")?;
+                let addr: String = ctx.get_addr_str(offset, "t0");
+                ctx.write_inst(format_args!("lw t0, {}", addr))?;
 
-                context.save_value_to_reg(context.current_value.unwrap(), "t0")?;
+                ctx.save_value_to_reg(ctx.current_value.unwrap(), "t0")?;
             }
 
             ValueKind::Branch(branch) => {
@@ -135,20 +142,20 @@ impl GenerateRiscv for ValueData {
                 let true_bb = branch.true_bb();
                 let false_bb = branch.false_bb();
 
-                context.load_value_to_reg(cond, "t0")?;
-                let true_bb_name = context.get_bb_name(true_bb);
-                let false_bb_name = context.get_bb_name(false_bb);
-                context.write_inst(format_args!(
+                ctx.load_value_to_reg(cond, "t0")?;
+                let true_bb_name = ctx.get_bb_name(true_bb);
+                let false_bb_name = ctx.get_bb_name(false_bb);
+                ctx.write_inst(format_args!(
                     "bnez t0, {}",
                     true_bb_name
                 ))?;
-                context.write_inst(format_args!("j {}", false_bb_name))?;
+                ctx.write_inst(format_args!("j {}", false_bb_name))?;
             }
 
             ValueKind::Jump(jump) => {
                 let target_bb = jump.target();
-                let target_bb_name = context.get_bb_name(target_bb);
-                context.write_inst(format_args!("j {}", target_bb_name))?;
+                let target_bb_name = ctx.get_bb_name(target_bb);
+                ctx.write_inst(format_args!("j {}", target_bb_name))?;
             }
 
             _ => {

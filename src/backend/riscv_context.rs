@@ -12,7 +12,7 @@ const WORD_SIZE: i32 = 4;
 pub struct RiscvContext<'a> {
     // Accumulates the generated RISC-V code
     out: String,
-    pub program: Option<&'a Program>,
+    pub program: &'a Program,
     pub current_func: Option<Function>, // Current function being processed
     pub current_value: Option<Value>,   // Current value being processed
 
@@ -20,19 +20,13 @@ pub struct RiscvContext<'a> {
     stack_size: i32,                 // Total size of the stack frame
 }
 
-impl<'a> Default for RiscvContext<'a> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<'a> RiscvContext<'a> {
     // Rust doesn't generate a default constructor automatically like C++
     // new() is just a regular static method conventionally used as a constructor
-    pub fn new() -> Self {
+    pub fn new(program: &'a Program) -> Self {
         RiscvContext {
             out: String::new(),
-            program: None,
+            program,
             current_func: None,
             current_value: None,
             values_map: HashMap::new(),
@@ -53,14 +47,16 @@ impl<'a> RiscvContext<'a> {
         &self.out
     }
 
+    /// Gets the ValueData for a given Value from the current function
     pub fn get_value_data(&self, value: Value) -> &ValueData {
         let func = Self::func_data(self.program, self.current_func);
         func.dfg().value(value)
     }
 
-    fn func_data(program: Option<&'a Program>, func: Option<Function>) -> &'a FunctionData {
+    /// Helper to get FunctionData for the current function
+    /// Implemented as a static method to avoid ownership issues
+    fn func_data(program: &'a Program, func: Option<Function>) -> &'a FunctionData {
         program
-            .expect("Program is not set in RiscvContext")
             .func(func.expect("Current function is not set in RiscvContext"))
     }
 
@@ -121,6 +117,8 @@ impl<'a> RiscvContext<'a> {
         self.stack_size = stack_size;
     }
 
+    /// Generates the function prologue, which adjusts the stack pointer
+    /// to allocate space for the stack frame.
     pub fn generate_prologue(&mut self) -> fmt::Result {
         let stack_size = self.get_stack_size();
         if stack_size == 0 {
@@ -136,6 +134,8 @@ impl<'a> RiscvContext<'a> {
         Ok(())
     }
 
+    /// Generates the function epilogue, which restores the stack pointer
+    /// before returning from the function.
     pub fn generate_epilogue(&mut self) -> fmt::Result {
         let stack_size = self.get_stack_size();
 
@@ -162,7 +162,10 @@ impl<'a> RiscvContext<'a> {
         self.stack_size
     }
 
-    /// Loads a value from the current stack frame to the specified register
+    /// Loads a value into a register.
+    /// For integer constants, uses `li` (or `mv` for zero).
+    /// For other values (they should be results of other instructions), 
+    /// loads from the stack.
     pub fn load_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
         let value_data = self.get_value_data(value);
 
@@ -185,6 +188,7 @@ impl<'a> RiscvContext<'a> {
         }
     }
 
+    /// Saves a register value back to the stack for the given Value.
     pub fn save_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
         if self.get_value_data(value).ty().is_unit() {
             return Ok(());

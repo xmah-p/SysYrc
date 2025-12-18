@@ -146,7 +146,8 @@ impl<'a> KoopaContext<'a> {
             ("starttime", vec![], void_type.clone()), 
             // stoptime(): void
             ("stoptime", vec![], void_type.clone()),  
-        ]; // WHY DOESN'T IMPLEMENT COPY FOR TYPE???!!!
+        ]; // WHY NOT IMPLEMENT COPY FOR TYPE???!!!
+        
 
         for (name, param_types, ret_type) in sysy_lib_functions {
             let func_data = FunctionData::new_decl(format!("@{}", name), param_types, ret_type);
