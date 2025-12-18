@@ -1,5 +1,5 @@
-use koopa::ir::builder::{BasicBlockBuilder, LocalBuilder};
-use koopa::ir::entities::{ValueData, ValueKind};
+use koopa::ir::builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder};
+use koopa::ir::entities::{ValueKind};
 use koopa::ir::*;
 
 use crate::frontend::symbol_table::*;
@@ -60,18 +60,23 @@ impl<'a> KoopaContext<'a> {
     pub fn set_current_bb(&mut self, bb: BasicBlock) {
         self.current_bb = Some(bb);
     }
-    pub fn get_value_data(&self, value: Value) -> &ValueData {
-        self.current_func().dfg().value(value)
-    }
 
     pub fn get_value_kind(&self, value: Value) -> ValueKind {
-        self.get_value_data(value).kind().clone()
+        if value.is_global() {
+            self.program.borrow_value(value).kind().clone()
+        } else {
+            self.current_func().dfg().value(value).kind().clone()
+        }
     }
 
     pub fn set_value_name(&mut self, value: Value, name: String) {
-        self.current_func_mut()
-            .dfg_mut()
-            .set_value_name(value, Some(name));
+        if value.is_global() {
+            self.program.set_value_name(value, Some(name));
+        } else {
+            self.current_func_mut()
+                .dfg_mut()
+                .set_value_name(value, Some(name));
+        }
     }
 
     /// Pushes the break and continue target basic blocks of the current loop
@@ -130,23 +135,26 @@ impl<'a> KoopaContext<'a> {
         let sysy_lib_functions = vec![
             // (name, parameter types, return type)
             // getint(): i32
-            ("getint", vec![], i32_type.clone()), 
+            ("getint", vec![], i32_type.clone()),
             // getch(): i32
-            ("getch", vec![], i32_type.clone()),  
+            ("getch", vec![], i32_type.clone()),
             // getarray(i32*): i32
-            ("getarray", vec![i32_ptr_type.clone()], i32_type.clone()), 
+            ("getarray", vec![i32_ptr_type.clone()], i32_type.clone()),
             // putint(i32): void
-            ("putint", vec![i32_type.clone()], void_type.clone()), 
+            ("putint", vec![i32_type.clone()], void_type.clone()),
             // putch(i32): void
-            ("putch", vec![i32_type.clone()], void_type.clone()), 
+            ("putch", vec![i32_type.clone()], void_type.clone()),
             // putarray(i32, i32*): void
-            ("putarray", vec![i32_type.clone(), i32_ptr_type.clone()], void_type.clone()),
+            (
+                "putarray",
+                vec![i32_type.clone(), i32_ptr_type.clone()],
+                void_type.clone(),
+            ),
             // starttime(): void
-            ("starttime", vec![], void_type.clone()), 
+            ("starttime", vec![], void_type.clone()),
             // stoptime(): void
-            ("stoptime", vec![], void_type.clone()),  
+            ("stoptime", vec![], void_type.clone()),
         ]; // WHY NOT IMPLEMENT COPY FOR TYPE???!!!
-        
 
         for (name, param_types, ret_type) in sysy_lib_functions {
             let func_data = FunctionData::new_decl(format!("@{}", name), param_types, ret_type);
@@ -184,6 +192,10 @@ impl<'a> KoopaContext<'a> {
     /// Returns a LocalBuilder for the newly created value
     pub fn new_value(&mut self) -> LocalBuilder {
         self.current_func_mut().dfg_mut().new_value()
+    }
+
+    pub fn new_global_value(&mut self) -> GlobalBuilder {
+        self.program.new_value()
     }
 
     /// Creates a new basic block in the DFG of func

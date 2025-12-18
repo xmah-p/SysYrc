@@ -188,6 +188,8 @@ impl<'a> RiscvContext<'a> {
         Ok(())
     }
 
+    /// Saves caller-saved registers (like ra) onto the stack
+    /// Currently only saves/restores ra if needed (i.e., if there are function calls)
     pub fn save_caller_saved_regs(&mut self) -> fmt::Result {
         if self.ra_offset == -1 {
             return Ok(());
@@ -197,6 +199,8 @@ impl<'a> RiscvContext<'a> {
         self.write_inst(format_args!("sw ra, {}", addr))
     }
 
+    /// Restores caller-saved registers (like ra) from the stack
+    /// Currently only saves/restores ra if needed (i.e., if there are function calls)
     pub fn restore_caller_saved_regs(&mut self) -> fmt::Result {
         if self.ra_offset == -1 {
             return Ok(());
@@ -219,6 +223,7 @@ impl<'a> RiscvContext<'a> {
 
     /// Loads a value into a register.
     /// For integer constants, uses `li` (or `mv` for zero).
+    /// For function arguments, loads from `a0`-`a7` or from the stack.
     /// For other values (they should be results of other instructions),
     /// loads from the stack.
     pub fn load_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {

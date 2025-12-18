@@ -256,7 +256,7 @@ impl ValueBuilder for LocalBuilder<'_> {
     fn zero_init(self, ty: Type) -> Value
     fn undef(self, ty: Type) -> Value
     fn aggregate(self, elems: Vec<Value>) -> Value
-}
+}kookoo
 ```
 
 # Develop 
@@ -331,3 +331,23 @@ fun @main(): i32 {
 检查一下符号和符号表，尤其是函数参数的处理。
 
 function call 只应该检查全局符号表？
+
+```rust
+// C:\Users\lenovo\.cargo\registry\src\index.crates.io-6f17d22bba15001f\koopa-0.0.8\src\back\koopa.rs
+
+  /// Generates the given value.
+  fn visit_value(&mut self, value: Value) -> Result<()> {
+    if value.is_global() {
+      let value = self.program.borrow_value(value);
+      assert!(!value.kind().is_const());    // 这里的 assert 莫名奇妙！导致全局常量无法被正常生成！
+      write!(self.w, "{}", self.nm.value_name(&value))
+    } else {
+      let value = value!(self, value);
+      if value.kind().is_const() {
+        self.visit_local_const(value)
+      } else {
+        write!(self.w, "{}", self.nm.value_name(value))
+      }
+    }
+  }
+```

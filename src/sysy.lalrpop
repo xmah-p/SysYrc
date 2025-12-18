@@ -50,23 +50,31 @@ match {
     _                            // Default case: convert to token and pass to parser
 }
 
+// ==============================================
+// Global
+// ==============================================
 
 // Non-teminal: Return Type = Match Pattern => Action Code
-pub CompUnit: CompUnit = <func_defs: FuncDef*> => CompUnit { func_defs };
-
-FuncDef: FuncDef = {
-    <func_type: FuncType> <func_name: Ident> "(" <params: Comma<FuncFParam>> ")" <block: Block> => {
-        FuncDef { func_type, func_name, params, block }
-    }
+pub CompUnit: CompUnit = <items: GlobalItem*> => CompUnit { 
+    items: items.into_iter().flatten().collect() 
 };
 
-FuncType: FuncType = {
-    "int" => FuncType::Int,
-    "void" => FuncType::Void,
-}
+GlobalItem: Vec<GlobalItem> = {
+    <decls: Decl> => decls.into_iter().map(GlobalItem::Decl).collect(),
+    <f: FuncDef> => vec![GlobalItem::FuncDef(f)],
+};
+
+FuncDef: FuncDef = {
+    "void" <func_name: Ident> "(" <params: Comma<FuncFParam>> ")" <block: Block> => {
+        FuncDef { func_type: FuncType::Void, func_name, params, block }
+    },
+    <t: DataType> <func_name: Ident> "(" <params: Comma<FuncFParam>> ")" <block: Block> => {
+        FuncDef { func_type: t.into(), func_name, params, block }
+    },
+};
 
 FuncFParam: FuncFParam = {
-    <param_type: ValueType> <param_name: Ident> => FuncFParam {
+    <param_type: DataType> <param_name: Ident> => FuncFParam {
         param_type,
         param_name,
     }
@@ -82,43 +90,45 @@ Block: Block = "{" <items: BlockItem*> "}" => Block {
 };
 
 BlockItem: Vec<BlockItem> = {
-    <decl: Decl> => decl, 
+    <decls: Decl> => decls.into_iter().map(BlockItem::Decl).collect(),
     <stmt: Stmt> => vec![BlockItem::Stmt(stmt)], 
 }
 
-Decl: Vec<BlockItem> = {
+// Multiple declarations can be grouped together
+// So Decl returns a Vec<Decl>
+Decl: Vec<Decl> = {
     <c: ConstDecl> => c,
     <v: VarDecl> => v,
 }
 
-ConstDecl: Vec<BlockItem> = {
-    "const" <vt: ValueType> <defs: Comma<ConstDef>> ";" => {
+ConstDecl: Vec<Decl> = {
+    "const" <vt: DataType> <defs: Comma<ConstDef>> ";" => {
         defs.into_iter()
-            .map(|(name, init)| BlockItem::Decl( {Decl {
+            .map(|(name, init)| Decl { 
                 constant: true,
                 var_type: vt.clone(), 
                 var_name: name,
                 init_expr: Some(init),
-            }}))
+            })
             .collect()
     }
 }
 
-VarDecl: Vec<BlockItem> = {
-    <vt: ValueType> <defs: Comma<VarDef>> ";" => {
+VarDecl: Vec<Decl> = {
+    <vt: DataType> <defs: Comma<VarDef>> ";" => {
         defs.into_iter()
-            .map(|(name, init)| BlockItem::Decl( {Decl {
+            .map(|(name, init)| Decl { 
                 constant: false,
                 var_type: vt.clone(), 
                 var_name: name,
                 init_expr: init,
-            }}))
+            })
             .collect()
     }
 }
 
-ValueType: ValueType = {
-    "int" => ValueType::Int,
+DataType: DataType = {
+    "int" => DataType::Int,
 }
 
 

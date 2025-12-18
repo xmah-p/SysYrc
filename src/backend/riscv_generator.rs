@@ -67,30 +67,35 @@ impl GenerateRiscv for ValueData {
             ValueKind::Call(call) => {
                 let args = call.args();
 
+                // Load arguments into regs or stack
                 for (i, &arg) in args.iter().enumerate() {
                     if i < 8 {
                         ctx.load_value_to_reg(arg, &format!("a{}", i))?;
                     } else {
                         ctx.load_value_to_reg(arg, "t0")?;
                         let offset = (i as i32 - 8) * WORD_SIZE;
-                        ctx.write_inst(format_args!("sw t0, {}(sp)", offset))?;
+                        ctx.prepare_addr(offset, "t1")?;
+                        let addr = ctx.get_addr_str(offset, "t1");
+                        ctx.write_inst(format_args!("sw t0, {}", addr))?;
                     }
                 }
 
+                // Call the function
                 let callee = call.callee();
                 let callee_name = ctx.program.func(callee).name().replace("@", "");
                 ctx.write_inst(format_args!("call {}", callee_name))?;
 
+                // Save return value if there is one
                 if !self.ty().is_unit() {
                     ctx.save_reg_to_stack(ctx.current_value.unwrap(), "a0")?;
                 }
             }
 
             ValueKind::Return(value) => {
+                // Load return value into a0 if exists
                 if let Some(ret_value) = value.value() {
                     ctx.load_value_to_reg(ret_value, "a0")?;
                 }
-                // Restore ra
                 ctx.restore_caller_saved_regs()?;
                 ctx.generate_epilogue()?;
                 ctx.write_inst(format_args!("ret\n"))?;

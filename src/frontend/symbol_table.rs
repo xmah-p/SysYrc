@@ -56,6 +56,10 @@ impl SymbolTable {
         self.table.insert(name, info);
     }
 
+    pub fn is_global_scope(&self) -> bool {
+        self.level == 0
+    }
+
     pub fn enter_scope(&mut self) {
         let new_table = SymbolTable {
             table: HashMap::new(),

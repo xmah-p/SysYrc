@@ -1,8 +1,25 @@
 // Abstract Syntax Tree (AST) definitions for SysY language
 
+#[derive(Debug, Clone, Copy)]
+pub enum DataType {
+    Int,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FuncType {
+    Void,
+    Int,
+}
+
+#[derive(Debug)]
+pub enum GlobalItem {
+    Decl(Decl),
+    FuncDef(FuncDef),
+}
+
 #[derive(Debug)]
 pub struct CompUnit {
-    pub func_defs: Vec<FuncDef>,
+    pub items: Vec<GlobalItem>,
 }
 
 #[derive(Debug)]
@@ -13,15 +30,9 @@ pub struct FuncDef {
     pub block: Block,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum FuncType {
-    Int,
-    Void,
-}
-
 #[derive(Debug)]
 pub struct FuncFParam {
-    pub param_type: ValueType,
+    pub param_type: DataType,
     pub param_name: String,
 }
 
@@ -39,14 +50,16 @@ pub enum BlockItem {
 #[derive(Debug)]
 pub struct Decl {
     pub constant: bool,
-    pub var_type: ValueType,
+    pub var_type: DataType,
     pub var_name: String,
     pub init_expr: Option<Expr>,
 }
 
 #[derive(Debug)]
 pub enum Stmt {
-    Return { expr: Option<Expr> },
+    Return {
+        expr: Option<Expr>,
+    },
     Assign {
         lval: String,
         expr: Expr,
@@ -59,7 +72,7 @@ pub enum Stmt {
     },
     If {
         cond: Expr,
-        then_body: Box<Stmt>,    // Boxed to avoid recursive size issues
+        then_body: Box<Stmt>, // Boxed to avoid recursive size issues
         else_body: Option<Box<Stmt>>,
     },
     While {
@@ -115,9 +128,10 @@ pub enum UnaryOp {
     Not,
 }
 
-
-
-#[derive(Debug, Clone, Copy)]
-pub enum ValueType {
-    Int,
+impl From<DataType> for FuncType {
+    fn from(dt: DataType) -> Self {
+        match dt {
+            DataType::Int => FuncType::Int,
+        }
+    }
 }
