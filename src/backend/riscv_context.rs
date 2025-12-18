@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write; // to bring the write! macro into scope
@@ -5,8 +6,8 @@ use std::fmt::Write; // to bring the write! macro into scope
 use koopa::ir::entities::ValueData;
 use koopa::ir::*;
 
+pub const WORD_SIZE: i32 = 4;
 const MAX_IMM_12: i32 = 2047; // Maximum positive immediate for 12-bit signed integer
-const WORD_SIZE: i32 = 4;
 
 /// Context for RISC-V code generation
 pub struct RiscvContext<'a> {
@@ -18,6 +19,7 @@ pub struct RiscvContext<'a> {
 
     values_map: HashMap<Value, i32>, // Map Koopa IR Values to their stack offsets
     stack_size: i32,                 // Total size of the stack frame
+    ra_offset: i32,                  // Offset for the return address if saved
 }
 
 impl<'a> RiscvContext<'a> {
@@ -31,6 +33,7 @@ impl<'a> RiscvContext<'a> {
             current_value: None,
             values_map: HashMap::new(),
             stack_size: 0,
+            ra_offset: 0,
         }
     }
 
@@ -56,19 +59,13 @@ impl<'a> RiscvContext<'a> {
     /// Helper to get FunctionData for the current function
     /// Implemented as a static method to avoid ownership issues
     fn func_data(program: &'a Program, func: Option<Function>) -> &'a FunctionData {
-        program
-            .func(func.expect("Current function is not set in RiscvContext"))
+        program.func(func.expect("Current function is not set in RiscvContext"))
     }
 
     /// Gets the name of the basic block, removing the '%' prefix
     pub fn get_bb_name(&self, bb: BasicBlock) -> String {
         let func = Self::func_data(self.program, self.current_func);
-        func.dfg()
-            .bb(bb)
-            .name()
-            .as_ref()
-            .unwrap()
-            .replace("%", "")
+        func.dfg().bb(bb).name().as_ref().unwrap().replace("%", "")
     }
 
     /// If offset exceeds 12-bit immediate range, prepares the address in tmp_reg.
@@ -83,7 +80,7 @@ impl<'a> RiscvContext<'a> {
 
     /// Gets the address string for load/store instructions
     /// For offsets within 12-bit immediate range, returns "offset(sp)"
-    /// For larger offsets, returns "0(tmp_reg)". In this case, tmp_reg should 
+    /// For larger offsets, returns "0(tmp_reg)". In this case, tmp_reg should
     /// hold the computed address (which can be prepared using `prepare_addr`).
     pub fn get_addr_str(&self, offset: i32, tmp_reg: &str) -> String {
         if offset > MAX_IMM_12 {
@@ -95,26 +92,66 @@ impl<'a> RiscvContext<'a> {
 
     /// Initializes the stack frame by calculating offsets for each Value
     /// and setting the total stack size.
+    /// Stack frame layout:
+    ///
+    /// Stack frame for previous function
+    /// Saved ra
+    /// Local variables...
+    /// 10th argument
+    /// 9th argument
+    /// Stack frame for Next function
     pub fn init_stack_frame(&mut self) {
         self.values_map.clear();
-        let mut stack_size = 0;
-
         let func = Self::func_data(self.program, self.current_func);
 
+        let mut has_call = false;
+        let mut max_call_args = 0;
         for (&_bb, node) in func.layout().bbs() {
             for &inst in node.insts().keys() {
-                let inst_data: &ValueData = func.dfg().value(inst);
-                // Assume `alloc` instructions always allocate 4 bytes for now
-                // [TODO] Should be extended for other types later
-                if !inst_data.ty().is_unit() {
-                    self.values_map.insert(inst, stack_size);
-                    stack_size += WORD_SIZE; // Assuming each non-unit value takes 4 bytes
+                let inst_data = func.dfg().value(inst);
+                if let ValueKind::Call(call) = inst_data.kind() {
+                    has_call = true;
+                    max_call_args = max(max_call_args, call.args().len());
                 }
             }
         }
-        // Align stack size to 16 bytes
-        stack_size = (stack_size + 15) & !15;
-        self.stack_size = stack_size;
+        let ra_size = if has_call { WORD_SIZE } else { 0 };
+        let call_args_size = if max_call_args > 8 {
+            (max_call_args - 8) as i32 * WORD_SIZE
+        } else {
+            0
+        };
+
+        let mut local_size = 0;
+        for (&_bb, node) in func.layout().bbs() {
+            for &inst in node.insts().keys() {
+                let inst_data = func.dfg().value(inst);
+                if !inst_data.ty().is_unit() {
+                    local_size += WORD_SIZE;
+                }
+            }
+        }
+
+        let total_size = ra_size + local_size + call_args_size;
+        self.stack_size = (total_size + 15) & !15; // Align to 16 bytes
+
+        if has_call {
+            self.ra_offset = self.stack_size - ra_size;
+        } else {
+            self.ra_offset = -1; // Indicate that ra is not saved
+        }
+
+        let mut offset = call_args_size;
+
+        for (&_bb, node) in func.layout().bbs() {
+            for &inst in node.insts().keys() {
+                let inst_data = func.dfg().value(inst);
+                if !inst_data.ty().is_unit() {
+                    self.values_map.insert(inst, offset);
+                    offset += WORD_SIZE;
+                }
+            }
+        }
     }
 
     /// Generates the function prologue, which adjusts the stack pointer
@@ -151,6 +188,24 @@ impl<'a> RiscvContext<'a> {
         Ok(())
     }
 
+    pub fn save_caller_saved_regs(&mut self) -> fmt::Result {
+        if self.ra_offset == -1 {
+            return Ok(());
+        }
+        self.prepare_addr(self.ra_offset, "t0")?;
+        let addr = self.get_addr_str(self.ra_offset, "t0");
+        self.write_inst(format_args!("sw ra, {}", addr))
+    }
+
+    pub fn restore_caller_saved_regs(&mut self) -> fmt::Result {
+        if self.ra_offset == -1 {
+            return Ok(());
+        }
+        self.prepare_addr(self.ra_offset, "t0")?;
+        let addr = self.get_addr_str(self.ra_offset, "t0");
+        self.write_inst(format_args!("lw ra, {}", addr))
+    }
+
     pub fn get_stack_offset(&self, value: Value) -> i32 {
         self.values_map
             .get(&value)
@@ -164,7 +219,7 @@ impl<'a> RiscvContext<'a> {
 
     /// Loads a value into a register.
     /// For integer constants, uses `li` (or `mv` for zero).
-    /// For other values (they should be results of other instructions), 
+    /// For other values (they should be results of other instructions),
     /// loads from the stack.
     pub fn load_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
         let value_data = self.get_value_data(value);
@@ -175,6 +230,17 @@ impl<'a> RiscvContext<'a> {
                     self.write_inst(format_args!("mv {}, x0", reg_name))
                 } else {
                     self.write_inst(format_args!("li {}, {}", reg_name, int.value()))
+                }
+            }
+            ValueKind::FuncArgRef(arg) => {
+                let arg_index = arg.index() as i32;
+                if arg_index < 8 {
+                    self.write_inst(format_args!("mv {}, a{}", reg_name, arg_index))
+                } else {
+                    let offset = (arg_index - 8) * WORD_SIZE + self.get_stack_size();
+                    self.prepare_addr(offset, reg_name)?;
+                    let addr: String = self.get_addr_str(offset, reg_name);
+                    self.write_inst(format_args!("lw {}, {}", reg_name, addr))
                 }
             }
             // Result of other instructions
@@ -189,7 +255,7 @@ impl<'a> RiscvContext<'a> {
     }
 
     /// Saves a register value back to the stack for the given Value.
-    pub fn save_value_to_reg(&mut self, value: Value, reg_name: &str) -> fmt::Result {
+    pub fn save_reg_to_stack(&mut self, value: Value, reg_name: &str) -> fmt::Result {
         if self.get_value_data(value).ty().is_unit() {
             return Ok(());
         }

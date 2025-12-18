@@ -1,4 +1,4 @@
-use crate::backend::riscv_context::RiscvContext;
+use crate::backend::riscv_context::*;
 use koopa::ir::entities::ValueData;
 use koopa::ir::{values::BinaryOp as KoopaBinaryOp, *};
 use std::fmt;
@@ -17,6 +17,10 @@ impl GenerateRiscv for Program {
 
         for &func in self.func_layout() {
             let func_data = self.func(func);
+            // Skip function declarations (none entry basic block)
+            if func_data.layout().entry_bb().is_none() {
+                continue;
+            }
             ctx.current_func = Some(func);
             func_data.generate(ctx)?;
         }
@@ -24,25 +28,18 @@ impl GenerateRiscv for Program {
     }
 }
 
-/// Stack frame layout:
-/// 
-/// Stack frame for previous function
-/// Saved ra
-/// Local variables...
-/// 10th argument
-/// 9th argument
-/// Stack frame for Next function
 impl GenerateRiscv for FunctionData {
     fn generate<'a>(&'a self, ctx: &mut RiscvContext<'a>) -> fmt::Result {
         // Function name starts with an '@'
         let name = self.name().replace("@", "");
-        ctx.write_line(".text")?;
-        ctx.write_line(&format!(".globl {}", name))?;
+        ctx.write_inst(format_args!(".text"))?;
+        ctx.write_inst(format_args!(".globl {}", name))?;
         ctx.write_line(&format!("{}:", name))?;
 
         // Stack frame setup
         ctx.init_stack_frame();
         ctx.generate_prologue()?;
+        ctx.save_caller_saved_regs()?;
 
         // Generate code for each basic block
         for (&bb, node) in self.layout().bbs() {
@@ -67,14 +64,36 @@ impl GenerateRiscv for ValueData {
         match self.kind() {
             ValueKind::Integer(_) => {}
 
-            ValueKind::Return(value) => {
-                let Some(ret_value) = value.value() else {
-                    panic!("Unsupported return instruction without value");
-                };
+            ValueKind::Call(call) => {
+                let args = call.args();
 
-                ctx.load_value_to_reg(ret_value, "a0")?;
+                for (i, &arg) in args.iter().enumerate() {
+                    if i < 8 {
+                        ctx.load_value_to_reg(arg, &format!("a{}", i))?;
+                    } else {
+                        ctx.load_value_to_reg(arg, "t0")?;
+                        let offset = (i as i32 - 8) * WORD_SIZE;
+                        ctx.write_inst(format_args!("sw t0, {}(sp)", offset))?;
+                    }
+                }
+
+                let callee = call.callee();
+                let callee_name = ctx.program.func(callee).name().replace("@", "");
+                ctx.write_inst(format_args!("call {}", callee_name))?;
+
+                if !self.ty().is_unit() {
+                    ctx.save_reg_to_stack(ctx.current_value.unwrap(), "a0")?;
+                }
+            }
+
+            ValueKind::Return(value) => {
+                if let Some(ret_value) = value.value() {
+                    ctx.load_value_to_reg(ret_value, "a0")?;
+                }
+                // Restore ra
+                ctx.restore_caller_saved_regs()?;
                 ctx.generate_epilogue()?;
-                ctx.write_inst(format_args!("ret"))?;
+                ctx.write_inst(format_args!("ret\n"))?;
             }
 
             ValueKind::Binary(bin) => {
@@ -108,7 +127,7 @@ impl GenerateRiscv for ValueData {
                         }
                     }
                 }
-                ctx.save_value_to_reg(ctx.current_value.unwrap(), "t0")?;
+                ctx.save_reg_to_stack(ctx.current_value.unwrap(), "t0")?;
             }
 
             ValueKind::Alloc(_) => {
@@ -134,7 +153,7 @@ impl GenerateRiscv for ValueData {
                 let addr: String = ctx.get_addr_str(offset, "t0");
                 ctx.write_inst(format_args!("lw t0, {}", addr))?;
 
-                ctx.save_value_to_reg(ctx.current_value.unwrap(), "t0")?;
+                ctx.save_reg_to_stack(ctx.current_value.unwrap(), "t0")?;
             }
 
             ValueKind::Branch(branch) => {
@@ -145,10 +164,7 @@ impl GenerateRiscv for ValueData {
                 ctx.load_value_to_reg(cond, "t0")?;
                 let true_bb_name = ctx.get_bb_name(true_bb);
                 let false_bb_name = ctx.get_bb_name(false_bb);
-                ctx.write_inst(format_args!(
-                    "bnez t0, {}",
-                    true_bb_name
-                ))?;
+                ctx.write_inst(format_args!("bnez t0, {}", true_bb_name))?;
                 ctx.write_inst(format_args!("j {}", false_bb_name))?;
             }
 
