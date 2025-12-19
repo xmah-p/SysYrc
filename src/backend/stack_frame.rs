@@ -1,13 +1,13 @@
-use std::collections::HashMap;
 use koopa::ir::entities::{FunctionData, Value, ValueKind};
 use std::cmp::max;
+use std::collections::HashMap;
 
 use crate::backend::riscv_generator::WORD_SIZE;
 
 pub struct StackFrame {
     values_map: HashMap<Value, i32>, // Map Koopa IR Values to their stack offsets
     stack_size: i32,                 // Total size of the stack frame
-    ra_offset: Option<i32>,                  // Offset for the return address if saved
+    ra_offset: Option<i32>,          // Offset for the return address if saved
 }
 
 impl StackFrame {
@@ -55,6 +55,7 @@ impl StackFrame {
             for &inst in node.insts().keys() {
                 let inst_data = func.dfg().value(inst);
                 if !inst_data.ty().is_unit() {
+                    self.values_map.insert(inst, local_size + call_args_size);
                     local_size += WORD_SIZE;
                 }
             }
@@ -62,24 +63,11 @@ impl StackFrame {
 
         let total_size = ra_size + local_size + call_args_size;
         self.stack_size = (total_size + 15) & !15; // Align to 16 bytes
-
         self.ra_offset = if has_call {
             Some(self.stack_size - ra_size)
         } else {
             None
         };
-
-        let mut offset = call_args_size;
-
-        for (&_, node) in func.layout().bbs() {
-            for &inst in node.insts().keys() {
-                let inst_data = func.dfg().value(inst);
-                if !inst_data.ty().is_unit() {
-                    self.values_map.insert(inst, offset);
-                    offset += WORD_SIZE;
-                }
-            }
-        }
     }
 
     pub fn get_stack_offset(&self, value: Value) -> i32 {

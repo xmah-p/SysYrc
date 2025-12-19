@@ -26,12 +26,8 @@ impl<W: Write> AsmWriter<W> {
         writeln!(self.writer, "{}:", label)
     }
 
-    pub fn write_directive(&mut self, directive: &str, args: &[&str], indent: bool) -> io::Result<()> {
-        if indent {
-            write!(self.writer, "    .{}", directive)?;
-        } else {
-            write!(self.writer, ".{}", directive)?;
-        }
+    pub fn write_directive(&mut self, directive: &str, args: &[&str]) -> io::Result<()> {
+        write!(self.writer, "    .{}", directive)?;
         if !args.is_empty() {
             write!(self.writer, " ")?;
             for (i, arg) in args.iter().enumerate() {
@@ -41,6 +37,15 @@ impl<W: Write> AsmWriter<W> {
                 write!(self.writer, "{}", arg)?;
             }
         }
+        writeln!(self.writer)
+    }
+
+    #[allow(dead_code)]
+    pub fn write_comment(&mut self, comment: &str) -> io::Result<()> {
+        writeln!(self.writer, "    # {}", comment)
+    }
+
+    pub fn write_blank_line(&mut self) -> io::Result<()> {
         writeln!(self.writer)
     }
 }

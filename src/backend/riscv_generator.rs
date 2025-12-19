@@ -23,42 +23,38 @@ impl<'a, W: Write> RiscvGenerator<'a, W> {
     pub fn generate_program(&mut self) -> io::Result<()> {
         let program = self.program;
 
-        self.writer.write_directive("data", &[], false)?;
+        // Generate data segment for global variables
+        self.writer.write_directive("data", &[])?;
         for &global in program.inst_layout() {
-            let global_data = program.borrow_value(global);
-            let name = global_data.name().as_ref().unwrap().replace("@", "");
+            let name = self.get_global_value_name(global);
 
-            self.writer.write_directive("globl", &[&name], true)?;
+            self.writer.write_directive("globl", &[&name])?;
             self.writer.write_label(&name)?;
 
-            match global_data.kind() {
-                ValueKind::GlobalAlloc(alloc) => {
-                    let init = alloc.init();
-                    let init_data = program.borrow_value(init);
-                    match init_data.kind() {
-                        ValueKind::Integer(int) => {
-                            self.writer.write_directive(
-                                "word",
-                                &[&int.value().to_string()],
-                                true,
-                            )?;
-                        }
-                        ValueKind::ZeroInit(_) => {
-                            self.writer
-                                .write_directive("zero", &[&WORD_SIZE.to_string()], true)?;
-                        }
-                        _ => {
-                            panic!("Unsupported global initializer");
-                        }
-                    }
+            let kind = self.get_global_value_kind(global);
+            let ValueKind::GlobalAlloc(alloc) = kind else {
+                unreachable!("Expected GlobalAlloc for global variable");
+            };
+
+            let init = alloc.init();
+            let init_kind = self.get_global_value_kind(init);
+            match init_kind {
+                ValueKind::Integer(int) => {
+                    self.writer
+                        .write_directive("word", &[&int.value().to_string()])?;
+                }
+                ValueKind::ZeroInit(_) => {
+                    self.writer
+                        .write_directive("zero", &[&WORD_SIZE.to_string()])?;
                 }
                 _ => {
-                    panic!("Unsupported global value kind");
+                    unreachable!("Unsupported global initializer");
                 }
             }
         }
+        self.writer.write_blank_line()?;
 
-        self.writer.write_directive("text", &[], false)?;
+        self.writer.write_directive("text", &[])?;
         for &func in program.func_layout() {
             let func_data = program.func(func);
             // Skip function declarations (none entry basic block)
@@ -69,6 +65,19 @@ impl<'a, W: Write> RiscvGenerator<'a, W> {
             func_gen.generate_function()?;
         }
         Ok(())
+    }
+
+    fn get_global_value_name(&self, value: Value) -> String {
+        self.program
+            .borrow_value(value)
+            .name()
+            .as_ref()
+            .unwrap()
+            .replace("@", "")
+    }
+
+    fn get_global_value_kind(&self, value: Value) -> ValueKind {
+        self.program.borrow_value(value).kind().clone()
     }
 }
 
@@ -92,7 +101,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
     fn generate_function(&mut self) -> io::Result<()> {
         // Function name starts with an '@'
         let name = self.func.name().replace("@", "");
-        self.gen.writer.write_directive("globl", &[&name], true)?;
+        self.gen.writer.write_directive("globl", &[&name])?;
         self.gen.writer.write_label(&name)?;
 
         // Stack frame setup
@@ -100,10 +109,16 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         self.save_caller_saved_regs()?;
 
         // Generate code for each basic block
+        let mut is_first_bb = true;
         for (&bb, node) in self.func.layout().bbs() {
             // node is a &BasicBlockNode
             let bb_name = self.get_bb_name(bb);
-            self.gen.writer.write_label(&bb_name)?;
+            // Skip label for the entry basic block (already labeled above)
+            if !is_first_bb {
+                self.gen.writer.write_label(&bb_name)?;
+            } else {
+                is_first_bb = false;
+            }
 
             // Generate code for each instruction in the basic block
             for &inst in node.insts().keys() {
@@ -113,14 +128,143 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         Ok(())
     }
 
-    fn get_bb_name(&self, bb: BasicBlock) -> String {
-        self.func
-            .dfg()
-            .bb(bb)
-            .name()
-            .as_ref()
-            .unwrap()
-            .replace("%", "")
+    fn generate_instruction(&mut self, value: Value) -> io::Result<()> {
+        let value_kind = self.get_value_kind(value);
+        match value_kind {
+            ValueKind::Integer(_) => {}
+
+            ValueKind::Call(call) => {
+                let args = call.args();
+
+                // Load arguments into regs or stack
+                for (i, &arg) in args.iter().enumerate() {
+                    if i < 8 {
+                        self.load_value_to_reg(arg, &format!("a{}", i))?;
+                    } else {
+                        self.load_value_to_reg(arg, "t0")?;
+                        let offset = (i as i32 - 8) * WORD_SIZE;
+                        self.prepare_addr(offset, "t1")?;
+                        let addr = self.get_addr_str(offset, "t1");
+                        self.gen.writer.write_inst("sw", &["t0", &addr])?;
+                    }
+                }
+
+                // Call the function
+                let callee = call.callee();
+                let callee_name = self.gen.program.func(callee).name().replace("@", "");
+                self.gen.writer.write_inst("call", &[&callee_name])?;
+
+                // Save return value if there is one
+                let value_type = self.get_value_type(value);
+                if !value_type.is_unit() {
+                    self.save_value_from_reg(value, "a0")?;
+                }
+            }
+
+            ValueKind::Return(ret) => {
+                // Load return value into a0 if exists
+                if let Some(ret_value) = ret.value() {
+                    self.load_value_to_reg(ret_value, "a0")?;
+                }
+                self.restore_caller_saved_regs()?;
+                self.generate_epilogue()?;
+                self.gen.writer.write_inst("ret", &[])?;
+                self.gen.writer.write_blank_line()?;
+            }
+
+            ValueKind::Binary(bin) => {
+                self.load_value_to_reg(bin.lhs(), "t0")?;
+                self.load_value_to_reg(bin.rhs(), "t1")?;
+
+                let op_str = map_binary_op(bin.op());
+                match bin.op() {
+                    KoopaBinaryOp::Le => {
+                        self.gen.writer.write_inst("sgt", &["t0", "t0", "t1"])?; // t0 = (lhs > rhs)
+                        self.gen.writer.write_inst("seqz", &["t0", "t0"])?; // t0 = (t0 == 0) => !(lhs > rhs) => lhs <= rhs
+                    }
+                    KoopaBinaryOp::Ge => {
+                        self.gen.writer.write_inst("slt", &["t0", "t0", "t1"])?;
+                        self.gen.writer.write_inst("seqz", &["t0", "t0"])?;
+                    }
+                    KoopaBinaryOp::Eq => {
+                        self.gen.writer.write_inst("xor", &["t0", "t0", "t1"])?;
+                        self.gen.writer.write_inst("seqz", &["t0", "t0"])?;
+                    }
+                    KoopaBinaryOp::NotEq => {
+                        self.gen.writer.write_inst("xor", &["t0", "t0", "t1"])?;
+                        self.gen.writer.write_inst("snez", &["t0", "t0"])?;
+                    }
+                    _ => {
+                        // Regular binary operations
+                        if let Some(op) = op_str {
+                            self.gen.writer.write_inst(op, &["t0", "t0", "t1"])?;
+                        } else {
+                            unreachable!("Unknown binary op");
+                        }
+                    }
+                }
+                self.save_value_from_reg(value, "t0")?;
+            }
+
+            ValueKind::Alloc(_) => {
+                // Allocation handled in stack frame setup.
+                // Does nothing here
+            }
+
+            ValueKind::Store(store) => {
+                let store_value = store.value();
+                let dest = store.dest();
+                self.load_value_to_reg(store_value, "t0")?;
+                if dest.is_global() {
+                    let global_name = self.gen.get_global_value_name(dest);
+                    self.gen.writer.write_inst("la", &["t1", &global_name])?;
+                    self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
+                } else {
+                    let offset = self.stack_frame.get_stack_offset(dest);
+                    self.prepare_addr(offset, "t1")?;
+                    let addr: String = self.get_addr_str(offset, "t1");
+                    self.gen.writer.write_inst("sw", &["t0", &addr])?;
+                }
+            }
+
+            ValueKind::Load(load) => {
+                let src = load.src();
+                if src.is_global() {
+                    let global_name = self.gen.get_global_value_name(src);
+                    self.gen.writer.write_inst("la", &["t0", &global_name])?;
+                    self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
+                } else {
+                    let offset = self.stack_frame.get_stack_offset(src);
+                    self.prepare_addr(offset, "t0")?;
+                    let addr: String = self.get_addr_str(offset, "t0");
+                    self.gen.writer.write_inst("lw", &["t0", &addr])?;
+                }
+                self.save_value_from_reg(value, "t0")?;
+            }
+
+            ValueKind::Branch(branch) => {
+                let cond = branch.cond();
+                let true_bb = branch.true_bb();
+                let false_bb = branch.false_bb();
+
+                self.load_value_to_reg(cond, "t0")?;
+                let true_bb_name = self.get_bb_name(true_bb);
+                let false_bb_name = self.get_bb_name(false_bb);
+                self.gen.writer.write_inst("bnez", &["t0", &true_bb_name])?;
+                self.gen.writer.write_inst("j", &[&false_bb_name])?;
+            }
+
+            ValueKind::Jump(jump) => {
+                let target_bb = jump.target();
+                let target_bb_name = self.get_bb_name(target_bb);
+                self.gen.writer.write_inst("j", &[&target_bb_name])?;
+            }
+
+            _ => {
+                panic!("Unsupported instruction in RISC-V generation");
+            }
+        }
+        Ok(())
     }
 
     fn generate_prologue(&mut self) -> io::Result<()> {
@@ -189,247 +333,62 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         self.gen.writer.write_inst("lw", &["ra", &addr])
     }
 
-    fn load_global_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
-        let global_name = self
-            .gen
-            .program
-            .borrow_value(value)
-            .name()
-            .as_ref()
-            .unwrap()
-            .replace("@", "");
-        self.gen.writer.write_inst("la", &[reg, &global_name])?;
-        self.gen
-            .writer
-            .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")])
-    }
-
-    fn load_local_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
-        let value_data = self.func.dfg().value(value);
-        match value_data.kind() {
-            ValueKind::Integer(int) => {
-                if int.value() == 0 {
-                    self.gen.writer.write_inst("mv", &[reg, "x0"])
-                } else {
-                    self.gen
-                        .writer
-                        .write_inst("li", &[reg, &int.value().to_string()])
+    fn load_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
+        if value.is_global() {
+            let global_name = self.gen.get_global_value_name(value);
+            self.gen.writer.write_inst("la", &[reg, &global_name])?;
+            self.gen
+                .writer
+                .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")])
+        } else {
+            let kind = self.get_value_kind(value);
+            match kind {
+                ValueKind::Integer(int) => {
+                    if int.value() == 0 {
+                        self.gen.writer.write_inst("mv", &[reg, "x0"])
+                    } else {
+                        self.gen
+                            .writer
+                            .write_inst("li", &[reg, &int.value().to_string()])
+                    }
                 }
-            }
-            ValueKind::FuncArgRef(arg) => {
-                let arg_index = arg.index() as i32;
-                if arg_index < 8 {
-                    self.gen
-                        .writer
-                        .write_inst("mv", &[reg, &format!("a{}", arg_index)])
-                } else {
-                    let offset = (arg_index - 8) * WORD_SIZE + self.stack_frame.get_stack_size();
-                    self.prepare_addr(offset, reg)?;
-                    let addr: String = self.get_addr_str(offset, reg);
+                ValueKind::FuncArgRef(arg) => {
+                    let arg_index = arg.index() as i32;
+                    if arg_index < 8 {
+                        self.gen
+                            .writer
+                            .write_inst("mv", &[reg, &format!("a{}", arg_index)])
+                    } else {
+                        let offset =
+                            (arg_index - 8) * WORD_SIZE + self.stack_frame.get_stack_size();
+                        self.prepare_addr(offset, reg)?;
+                        let addr: String = self.get_addr_str(offset, reg);
+                        self.gen.writer.write_inst("lw", &[reg, &addr])
+                    }
+                }
+                // Result of other instructions
+                // They should have been already stored on the stack
+                _ => {
+                    let offset = self.stack_frame.get_stack_offset(value);
+                    self.prepare_addr(offset, "t0")?;
+                    let addr: String = self.get_addr_str(offset, "t0");
                     self.gen.writer.write_inst("lw", &[reg, &addr])
                 }
             }
-            // Result of other instructions
-            // They should have been already stored on the stack
-            _ => {
-                let offset = self.stack_frame.get_stack_offset(value);
-                self.prepare_addr(offset, "t0")?;
-                let addr: String = self.get_addr_str(offset, "t0");
-                self.gen.writer.write_inst("lw", &[reg, &addr])
-            }
         }
-    }
-
-    fn load_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
-        if value.is_global() {
-            self.load_global_value_to_reg(value, reg)
-        } else {
-            self.load_local_value_to_reg(value, reg)
-        }
-    }
-
-    fn save_global_value_from_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
-        let global_name = self
-            .gen
-            .program
-            .borrow_value(value)
-            .name()
-            .as_ref()
-            .unwrap()
-            .replace("@", "");
-        self.gen.writer.write_inst("la", &["t0", &global_name])?;
-        self.gen.writer.write_inst("sw", &[reg, "0(t0)"])
-    }
-
-    fn save_local_value_from_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
-        let offset = self.stack_frame.get_stack_offset(value);
-        self.prepare_addr(offset, "t0")?;
-        let addr: String = self.get_addr_str(offset, "t0");
-        self.gen.writer.write_inst("sw", &[reg, &addr])
     }
 
     fn save_value_from_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
         if value.is_global() {
-            self.save_global_value_from_reg(value, reg)
+            let global_name = self.gen.get_global_value_name(value);
+            self.gen.writer.write_inst("la", &["t0", &global_name])?;
+            self.gen.writer.write_inst("sw", &[reg, "0(t0)"])
         } else {
-            self.save_local_value_from_reg(value, reg)
+            let offset = self.stack_frame.get_stack_offset(value);
+            self.prepare_addr(offset, "t0")?;
+            let addr: String = self.get_addr_str(offset, "t0");
+            self.gen.writer.write_inst("sw", &[reg, &addr])
         }
-    }
-
-    fn generate_instruction(&mut self, value: Value) -> io::Result<()> {
-        let value_kind = self.get_value_kind(value);
-        match value_kind {
-            ValueKind::Integer(_) => {}
-
-            ValueKind::Call(call) => {
-                let args = call.args();
-
-                // Load arguments into regs or stack
-                for (i, &arg) in args.iter().enumerate() {
-                    if i < 8 {
-                        self.load_value_to_reg(arg, &format!("a{}", i))?;
-                    } else {
-                        self.load_value_to_reg(arg, "t0")?;
-                        let offset = (i as i32 - 8) * WORD_SIZE;
-                        self.prepare_addr(offset, "t1")?;
-                        let addr = self.get_addr_str(offset, "t1");
-                        self.gen.writer.write_inst("sw", &["t0", &addr])?;
-                    }
-                }
-
-                // Call the function
-                let callee = call.callee();
-                let callee_name = self.gen.program.func(callee).name().replace("@", "");
-                self.gen.writer.write_inst("call", &[&callee_name])?;
-
-                // Save return value if there is one
-                let value_type = self.get_value_type(value);
-                if !value_type.is_unit() {
-                    self.save_value_from_reg(value, "a0")?;
-                }
-            }
-
-            ValueKind::Return(ret) => {
-                // Load return value into a0 if exists
-                if let Some(ret_value) = ret.value() {
-                    self.load_value_to_reg(ret_value, "a0")?;
-                }
-                self.restore_caller_saved_regs()?;
-                self.generate_epilogue()?;
-                self.gen.writer.write_inst("ret", &[])?;
-            }
-
-            ValueKind::Binary(bin) => {
-                self.load_value_to_reg(bin.lhs(), "t0")?;
-                self.load_value_to_reg(bin.rhs(), "t1")?;
-
-                let op_str = map_binary_op(bin.op());
-                match bin.op() {
-                    KoopaBinaryOp::Le => {
-                        self.gen.writer.write_inst("sgt", &["t0", "t0", "t1"])?; // t0 = (lhs > rhs)
-                        self.gen.writer.write_inst("seqz", &["t0", "t0"])?; // t0 = (t0 == 0) => !(lhs > rhs) => lhs <= rhs
-                    }
-                    KoopaBinaryOp::Ge => {
-                        self.gen.writer.write_inst("slt", &["t0", "t0", "t1"])?;
-                        self.gen.writer.write_inst("seqz", &["t0", "t0"])?;
-                    }
-                    KoopaBinaryOp::Eq => {
-                        self.gen.writer.write_inst("xor", &["t0", "t0", "t1"])?;
-                        self.gen.writer.write_inst("seqz", &["t0", "t0"])?;
-                    }
-                    KoopaBinaryOp::NotEq => {
-                        self.gen.writer.write_inst("xor", &["t0", "t0", "t1"])?;
-                        self.gen.writer.write_inst("snez", &["t0", "t0"])?;
-                    }
-                    _ => {
-                        // Regular binary operations
-                        if let Some(op) = op_str {
-                            self.gen.writer.write_inst(op, &["t0", "t0", "t1"])?;
-                        } else {
-                            unreachable!("Unknown binary op");
-                        }
-                    }
-                }
-                self.save_value_from_reg(value, "t0")?;
-            }
-
-            ValueKind::Alloc(_) => {
-                // Allocation handled in stack frame setup.
-                // Does nothing here
-            }
-
-            ValueKind::Store(store) => {
-                let store_value = store.value();
-                let dest = store.dest();
-                if dest.is_global() {
-                    let global_name = self
-                        .gen
-                        .program
-                        .borrow_value(dest)
-                        .name()
-                        .as_ref()
-                        .unwrap()
-                        .replace("@", "");
-                    self.load_value_to_reg(store_value, "t0")?;
-                    self.gen.writer.write_inst("la", &["t1", &global_name])?;
-                    self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
-                    return Ok(());
-                }
-                let offset = self.stack_frame.get_stack_offset(dest);
-                self.load_value_to_reg(store_value, "t0")?;
-                self.prepare_addr(offset, "t1")?;
-                let addr: String = self.get_addr_str(offset, "t1");
-                self.gen.writer.write_inst("sw", &["t0", &addr])?;
-            }
-
-            ValueKind::Load(load) => {
-                let src = load.src();
-                if src.is_global() {
-                    let global_name = self
-                        .gen
-                        .program
-                        .borrow_value(src)
-                        .name()
-                        .as_ref()
-                        .unwrap()
-                        .replace("@", "");
-                    self.gen.writer.write_inst("la", &["t0", &global_name])?;
-                    self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
-                    self.save_value_from_reg(value, "t0")?;
-                } else {
-                    let offset = self.stack_frame.get_stack_offset(src);
-
-                    self.prepare_addr(offset, "t0")?;
-                    let addr: String = self.get_addr_str(offset, "t0");
-                    self.gen.writer.write_inst("lw", &["t0", &addr])?;
-
-                    self.save_value_from_reg(value, "t0")?;
-                }
-            }
-
-            ValueKind::Branch(branch) => {
-                let cond = branch.cond();
-                let true_bb = branch.true_bb();
-                let false_bb = branch.false_bb();
-
-                self.load_value_to_reg(cond, "t0")?;
-                let true_bb_name = self.get_bb_name(true_bb);
-                let false_bb_name = self.get_bb_name(false_bb);
-                self.gen.writer.write_inst("bnez", &["t0", &true_bb_name])?;
-                self.gen.writer.write_inst("j", &[&false_bb_name])?;
-            }
-
-            ValueKind::Jump(jump) => {
-                let target_bb = jump.target();
-                let target_bb_name = self.get_bb_name(target_bb);
-                self.gen.writer.write_inst("j", &[&target_bb_name])?;
-            }
-
-            _ => {
-                panic!("Unsupported instruction in RISC-V generation");
-            }
-        }
-        Ok(())
     }
 
     fn get_value_kind(&self, value: Value) -> ValueKind {
@@ -438,6 +397,16 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
 
     fn get_value_type(&self, value: Value) -> Type {
         self.func.dfg().value(value).ty().clone()
+    }
+
+    fn get_bb_name(&self, bb: BasicBlock) -> String {
+        self.func
+            .dfg()
+            .bb(bb)
+            .name()
+            .as_ref()
+            .unwrap()
+            .replace("%", "")
     }
 }
 
