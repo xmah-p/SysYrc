@@ -2,7 +2,7 @@
 
 ```bash
 # 使用双斜杠 // 开头可以告诉 Shell：“这是一个绝对路径，请不要把它转换成 Windows 路径”
-docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/compiler-dev autotest -riscv -s lv4 //root/compiler
+docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/compiler-dev autotest -riscv -s lv8 //root/compiler
 
 
 # 启动 docker 容器，挂载项目目录到容器内
