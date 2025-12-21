@@ -102,29 +102,11 @@ Decl: Vec<Decl> = {
 }
 
 ConstDecl: Vec<Decl> = {
-    "const" <vt: DataType> <defs: Comma<ConstDef>> ";" => {
-        defs.into_iter()
-            .map(|(name, init)| Decl { 
-                constant: true,
-                var_type: vt.clone(), 
-                var_name: name,
-                init_expr: Some(init),
-            })
-            .collect()
-    }
+    "const" <vt: DataType> <defs: Comma<ConstDef>> ";" => defs
 }
 
 VarDecl: Vec<Decl> = {
-    <vt: DataType> <defs: Comma<VarDef>> ";" => {
-        defs.into_iter()
-            .map(|(name, init)| Decl { 
-                constant: false,
-                var_type: vt.clone(), 
-                var_name: name,
-                init_expr: init,
-            })
-            .collect()
-    }
+    <vt: DataType> <defs: Comma<VarDef>> ";" => defs
 }
 
 DataType: DataType = {
@@ -132,25 +114,88 @@ DataType: DataType = {
 }
 
 
-ConstDef: (String, Expr) = {
-    <id: Ident> "=" <val: ConstInitVal> => (id, val),
+ConstDef: Decl = {
+    <id: Ident> <dims: ArrayDims> "=" <val: ConstInitVal> => {
+        if dims.is_empty() {
+            Decl::Const {
+                var_type: DataType::Int,
+                var_name: id,
+                init_list: val, 
+            }
+        } else {
+            Decl::ConstArray {
+                var_type: DataType::Int,
+                var_name: id,
+                dims: dims,
+                init_list: Some(val),
+            }
+        }
+    }
 }
 
-ConstInitVal: Expr = {
-    <e: ConstExpr> => e,
+ConstInitVal: InitVal = {
+    <e: ConstExpr> => InitVal::Exp(e),
+    "{" <list: Comma<ConstInitVal>> "}" => InitVal::List(list),
 }
 
 ConstExpr: Expr = {
     <e: Expr> => e,
 }
 
-VarDef: (String, Option<Expr>) = {
-    <id: Ident> "=" <val: InitVal> => (id, Some(val)),
-    <id: Ident> => (id, None),
+VarDef: Decl = {
+    // With initialization
+    <id: Ident> <dims: ArrayDims> "=" <val: InitVal> => {
+        if dims.is_empty() {
+            Decl::Var {
+                var_type: DataType::Int,
+                var_name: id,
+                init_list: Some(val), 
+            }
+        } else {
+            Decl::Array {
+                var_type: DataType::Int,
+                var_name: id,
+                dims: dims,
+                init_list: Some(val),
+            }
+        }
+    },
+
+    // Without initialization
+    <id: Ident> <dims: ArrayDims> => {
+        if dims.is_empty() {
+            Decl::Var {
+                var_type: DataType::Int,
+                var_name: id,
+                init_list: None,
+            }
+        } else {
+            Decl::Array {
+                var_type: DataType::Int,
+                var_name: id,
+                dims: dims,
+                init_list: None,
+            }
+        }
+    }
 }
 
-InitVal: Expr = {
-    <e: Expr> => e,
+InitVal: InitList = {
+    <e: Exp> => InitList::Expr(e),
+    "{" <list: Comma<InitVal>> "}" => InitList::List(list),
+}
+
+ConstInitVal: InitList = {
+    <e: ConstExpr> => InitList::Expr(e),
+    "{" <list: Comma<ConstInitVal>> "}" => InitList::List(list),
+}
+
+ArrayDims: Vec<Expr> = {
+    ("[" <e:ConstExp> "]")*
+}
+
+Indices: Vec<Expr> = {
+    ("[" <e:Exp> "]")*
 }
 
 Comma<T>: Vec<T> = { 
@@ -361,7 +406,9 @@ BinaryOp: BinaryOp = {
     "%"  => BinaryOp::Mod,
 };
 
-LVal: String = <name: Ident> => <>;
+LVal: Expr = {
+    <id: Ident> <idxs: Indices> => Expr::LVal { name: id, indices: idxs },
+}
 
 Number: i32 = <num: IntConst> => <>;
 

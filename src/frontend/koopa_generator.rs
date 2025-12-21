@@ -113,70 +113,84 @@ impl GenerateKoopa for Block {
 
 impl GenerateKoopa for Decl {
     fn generate(&self, ctx: &mut KoopaContext) -> () {
-        let var_type = match self.var_type {
-            DataType::Int => Type::get_i32(),
-        };
-        let is_const = self.constant;
+        match self {
+            Decl::Const {
+                var_type,
+                var_name,
+                init_list,
+            } => {
+                let init_expr = unwrap_init_list(init_list);
 
-        // Constant variable
-        // Global and local constant variables are treated basically the same
-        // Compute its value at compile time and store the result in symbol table
-        if is_const {
-            let result: i32 = self
-                .init_expr
-                .as_ref()
-                .expect("Constant declaration must have an initializer")
-                .compute_constexpr(ctx);
-            let init = if ctx.symbol_table.is_global_scope() {
-                // Global constant variable
-                ctx.new_global_value().integer(result)
-            } else {
-                // Local constant variable
-                ctx.new_value().integer(result)
-            };
-            ctx.symbol_table
-                .insert(self.var_name.clone(), SymbolInfo::ConstVariable(init));
-        }
-        // Non-constant variable
-        // Note that global variables are treated differently from local variables
-        // Allocate space for the variable and store the initial value if exists
-        // Save its address in symbol table
-        else {
-            if ctx.symbol_table.is_global_scope() {
-                // Global variable
-                let init = if let Some(expr) = &self.init_expr {
-                    // Initializer for global variables must be a constexpr
-                    let init_value = expr.compute_constexpr(ctx);
-                    ctx.new_global_value().integer(init_value)
+                let result: i32 = init_expr.compute_constexpr(ctx);
+                let init = if ctx.symbol_table.is_global_scope() {
+                    // Global constant variable
+                    ctx.new_global_value().integer(result)
                 } else {
-                    // Default initialize to zero
-                    ctx.new_global_value().zero_init(var_type)
+                    // Local constant variable
+                    ctx.new_value().integer(result)
                 };
-                let alloc_ptr = ctx.new_global_value().global_alloc(init);
-                // No need to append scope level to global variable names
-                ctx.set_value_name(alloc_ptr, format!("@{}", self.var_name));
                 ctx.symbol_table
-                    .insert(self.var_name.clone(), SymbolInfo::Variable(alloc_ptr));
-            } else {
+                    .insert(var_name.clone(), SymbolInfo::ConstVariable(init));
+            }
+            Decl::Var {
+                var_type,
+                var_name,
+                init_list,
+            } => {
+                let init_expr = if let Some(init_list) = init_list {
+                    Some(unwrap_init_list(init_list))
+                } else {
+                    None
+                };
+                let var_type = match self.var_type {
+                    DataType::Int => Type::get_i32(),
+                };
+                // Global variable
+                if ctx.symbol_table.is_global_scope() {
+                    let init = if let Some(expr) = init_expr {
+                        // Initializer for global variables must be a constexpr
+                        let init_value = expr.compute_constexpr(ctx);
+                        ctx.new_global_value().integer(init_value)
+                    } else {
+                        // Default initialize to zero
+                        ctx.new_global_value().zero_init(var_type)
+                    };
+                    let alloc_ptr = ctx.new_global_value().global_alloc(init);
+                    // No need to append scope level to global variable names
+                    ctx.set_value_name(alloc_ptr, format!("@{}", var_name));
+                    ctx.symbol_table
+                        .insert(var_name.clone(), SymbolInfo::Variable(alloc_ptr));
+                    return;
+                }
                 // Local variable
                 let alloc_ptr = ctx.new_value().alloc(var_type);
                 // Koopa IR value names must be unique
-                // We append "_level" to variable names to distinguish variables
-                // with the same name in different scopes
-                let unique_name = format!("@{}_{}", self.var_name, ctx.symbol_table.level());
+                let unique_name = format!("@{}_{}", var_name, ctx.symbol_table.level());
                 ctx.set_value_name(alloc_ptr, unique_name);
 
                 ctx.add_inst(alloc_ptr);
                 // If there is an initializer, calculate and store the value
-                if let Some(expr) = &self.init_expr {
+                if let Some(expr) = init_expr {
                     let expr_value = expr.generate(ctx);
                     let store_inst = ctx.new_value().store(expr_value, alloc_ptr);
                     ctx.add_inst(store_inst);
                 }
                 ctx.symbol_table
-                    .insert(self.var_name.clone(), SymbolInfo::Variable(alloc_ptr));
+                    .insert(var_name.clone(), SymbolInfo::Variable(alloc_ptr));
             }
-        }
+            Decl::ConstArray {
+                var_type,
+                var_name,
+                dims,
+                init_list,
+            } => {}
+            Decl::Array {
+                var_type,
+                var_name,
+                dims,
+                init_list,
+            } => {}
+        };
     }
 }
 
@@ -547,7 +561,8 @@ impl Expr {
                     inst
                 }
             },
-            Expr::LVal(name) => {
+            
+            Expr::LVal {name, indices} => {
                 let addr: SymbolInfo = ctx
                     .symbol_table
                     .lookup(name)
@@ -556,7 +571,7 @@ impl Expr {
                     SymbolInfo::ConstVariable(val) => {
                         // Koopa IR library does not allow global constant values
                         // to be operated directly, for I don't know why...
-                        // This is a workaround to load the actual value into 
+                        // This is a workaround to load the actual value into
                         // the local context
                         if val.is_global() {
                             let kind = ctx.get_value_kind(val);
@@ -576,7 +591,8 @@ impl Expr {
                     }
                     SymbolInfo::Function(_) => unreachable!(),
                 }
-            }
+            },
+
             Expr::Call { func_name, args } => {
                 let symbol_info = ctx
                     .symbol_table
@@ -596,6 +612,24 @@ impl Expr {
 
                 // `void` functions return a unit value
                 call_inst
+            }
+        }
+    }
+}
+
+fn unwrap_init_list(init_list: &InitList) -> &Expr {
+    match init_list {
+        InitList::Expr(expr) => expr,
+        InitList::List(ls) => {
+            // Should contain exactly one expression
+            if ls.len() != 1 {
+                panic!("Variable declaration initializer list must contain exactly one expression");
+            }
+            match &ls[0] {
+                InitList::Expr(expr) => expr,
+                _ => panic!(
+                    "Variable declaration initializer list must contain exactly one expression"
+                ),
             }
         }
     }

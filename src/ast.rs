@@ -48,11 +48,34 @@ pub enum BlockItem {
 }
 
 #[derive(Debug)]
-pub struct Decl {
-    pub constant: bool,
-    pub var_type: DataType,
-    pub var_name: String,
-    pub init_expr: Option<Expr>,
+pub enum Decl {
+    Const {
+        var_type: DataType,
+        var_name: String,
+        init_list: InitList,
+    },
+    Var {
+        var_type: DataType,
+        var_name: String,
+        init_list: Option<InitList>,
+    },
+    Array {
+        var_type: DataType,
+        var_name: String,
+        dims: Vec<Expr>, // Array dimensions
+        init_list: Option<InitList>,
+    },
+    ConstArray {
+        var_type: DataType,
+        var_name: String,
+        dims: Vec<Expr>, // Array dimensions
+        init_list: Option<InitList>,
+    }
+}
+
+pub enum InitList {
+    Expr(Expr),
+    List(Vec<InitList>),
 }
 
 #[derive(Debug)]
@@ -96,7 +119,10 @@ pub enum Expr {
     },
     // Note that constant variable references are also treated as LVal here
     // Their values will be resolved during constant expression evaluation
-    LVal(String),
+    LVal {
+        name: String,
+        indices: Vec<Expr>,    // Empty if not an array
+    },
     Number(i32),
     Call {
         func_name: String,
