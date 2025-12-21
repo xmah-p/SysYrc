@@ -143,8 +143,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                     } else {
                         self.load_value_to_reg(arg, "t0")?;
                         let offset = (i as i32 - 8) * WORD_SIZE;
-                        self.prepare_addr(offset, "t1")?;
-                        let addr = self.get_addr_str(offset, "t1");
+                        let addr = self.build_stk_addr_str(offset, "t1")?;
                         self.gen.writer.write_inst("sw", &["t0", &addr])?;
                     }
                 }
@@ -198,8 +197,6 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                         // Regular binary operations
                         if let Some(op) = op_str {
                             self.gen.writer.write_inst(op, &["t0", "t0", "t1"])?;
-                        } else {
-                            unreachable!("Unknown binary op");
                         }
                     }
                 }
@@ -221,8 +218,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                     self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
                 } else {
                     let offset = self.stack_frame.get_stack_offset(dest);
-                    self.prepare_addr(offset, "t1")?;
-                    let addr: String = self.get_addr_str(offset, "t1");
+                    let addr: String = self.build_stk_addr_str(offset, "t1")?;
                     self.gen.writer.write_inst("sw", &["t0", &addr])?;
                 }
             }
@@ -235,8 +231,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                     self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
                 } else {
                     let offset = self.stack_frame.get_stack_offset(src);
-                    self.prepare_addr(offset, "t0")?;
-                    let addr: String = self.get_addr_str(offset, "t0");
+                    let addr: String = self.build_stk_addr_str(offset, "t0")?;
                     self.gen.writer.write_inst("lw", &["t0", &addr])?;
                 }
                 self.save_value_from_reg(value, "t0")?;
@@ -297,30 +292,25 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         Ok(())
     }
 
-    fn prepare_addr(&mut self, offset: i32, tmp_reg: &str) -> io::Result<()> {
-        if offset > MAX_IMM_12 || offset < -MAX_IMM_12 - 1 {
-            self.gen
-                .writer
-                .write_inst("li", &["t0", &offset.to_string()])?;
-            self.gen.writer.write_inst("add", &[tmp_reg, "sp", "t0"])?;
-        }
-        Ok(())
-    }
-
-    fn get_addr_str(&self, offset: i32, tmp_reg: &str) -> String {
+    /// Builds a stack address string for RISC-V load/store instructions.
+    /// If the offset fits in a 12-bit immediate, it returns "offset(sp)"
+    /// Otherwise, it loads the offset into a temporary register and returns "0(tmp_reg)"
+    fn build_stk_addr_str(&mut self, offset: i32, tmp_reg: &str) -> io::Result<String> {
         if offset <= MAX_IMM_12 && offset >= -MAX_IMM_12 - 1 {
-            format!("{}(sp)", offset)
-        } else {
-            format!("0({})", tmp_reg)
+            return Ok(format!("{}(sp)", offset));
         }
+        self.gen
+            .writer
+            .write_inst("li", &["t0", &offset.to_string()])?;
+        self.gen.writer.write_inst("add", &[tmp_reg, "sp", "t0"])?;
+        Ok(format!("0({})", tmp_reg))
     }
 
     fn save_caller_saved_regs(&mut self) -> io::Result<()> {
         let Some(ra_offset) = self.stack_frame.get_ra_offset() else {
             return Ok(());
         };
-        self.prepare_addr(ra_offset, "t0")?;
-        let addr = self.get_addr_str(ra_offset, "t0");
+        let addr = self.build_stk_addr_str(ra_offset, "t0")?;
         self.gen.writer.write_inst("sw", &["ra", &addr])
     }
 
@@ -328,8 +318,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         let Some(ra_offset) = self.stack_frame.get_ra_offset() else {
             return Ok(());
         };
-        self.prepare_addr(ra_offset, "t0")?;
-        let addr = self.get_addr_str(ra_offset, "t0");
+        let addr = self.build_stk_addr_str(ra_offset, "t0")?;
         self.gen.writer.write_inst("lw", &["ra", &addr])
     }
 
@@ -337,43 +326,41 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         if value.is_global() {
             let global_name = self.gen.get_global_value_name(value);
             self.gen.writer.write_inst("la", &[reg, &global_name])?;
-            self.gen
+            return self
+                .gen
                 .writer
-                .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")])
-        } else {
-            let kind = self.get_value_kind(value);
-            match kind {
-                ValueKind::Integer(int) => {
-                    if int.value() == 0 {
-                        self.gen.writer.write_inst("mv", &[reg, "x0"])
-                    } else {
-                        self.gen
-                            .writer
-                            .write_inst("li", &[reg, &int.value().to_string()])
-                    }
+                .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")]);
+        }
+        // Non-global values reside in the stack frame
+        let kind = self.get_value_kind(value);
+        match kind {
+            ValueKind::Integer(int) => {
+                if int.value() == 0 {
+                    self.gen.writer.write_inst("mv", &[reg, "x0"])
+                } else {
+                    self.gen
+                        .writer
+                        .write_inst("li", &[reg, &int.value().to_string()])
                 }
-                ValueKind::FuncArgRef(arg) => {
-                    let arg_index = arg.index() as i32;
-                    if arg_index < 8 {
-                        self.gen
-                            .writer
-                            .write_inst("mv", &[reg, &format!("a{}", arg_index)])
-                    } else {
-                        let offset =
-                            (arg_index - 8) * WORD_SIZE + self.stack_frame.get_stack_size();
-                        self.prepare_addr(offset, reg)?;
-                        let addr: String = self.get_addr_str(offset, reg);
-                        self.gen.writer.write_inst("lw", &[reg, &addr])
-                    }
-                }
-                // Result of other instructions
-                // They should have been already stored on the stack
-                _ => {
-                    let offset = self.stack_frame.get_stack_offset(value);
-                    self.prepare_addr(offset, "t0")?;
-                    let addr: String = self.get_addr_str(offset, "t0");
+            }
+            ValueKind::FuncArgRef(arg) => {
+                let arg_index = arg.index() as i32;
+                if arg_index < 8 {
+                    self.gen
+                        .writer
+                        .write_inst("mv", &[reg, &format!("a{}", arg_index)])
+                } else {
+                    let offset = (arg_index - 8) * WORD_SIZE + self.stack_frame.get_stack_size();
+                    let addr: String = self.build_stk_addr_str(offset, reg)?;
                     self.gen.writer.write_inst("lw", &[reg, &addr])
                 }
+            }
+            // Result of other instructions
+            // They should have been already stored on the stack
+            _ => {
+                let offset = self.stack_frame.get_stack_offset(value);
+                let addr: String = self.build_stk_addr_str(offset, "t0")?;
+                self.gen.writer.write_inst("lw", &[reg, &addr])
             }
         }
     }
@@ -382,13 +369,11 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         if value.is_global() {
             let global_name = self.gen.get_global_value_name(value);
             self.gen.writer.write_inst("la", &["t0", &global_name])?;
-            self.gen.writer.write_inst("sw", &[reg, "0(t0)"])
-        } else {
-            let offset = self.stack_frame.get_stack_offset(value);
-            self.prepare_addr(offset, "t0")?;
-            let addr: String = self.get_addr_str(offset, "t0");
-            self.gen.writer.write_inst("sw", &[reg, &addr])
+            return self.gen.writer.write_inst("sw", &[reg, "0(t0)"]);
         }
+        let offset = self.stack_frame.get_stack_offset(value);
+        let addr: String = self.build_stk_addr_str(offset, "t0")?;
+        self.gen.writer.write_inst("sw", &[reg, &addr])
     }
 
     fn get_value_kind(&self, value: Value) -> ValueKind {
