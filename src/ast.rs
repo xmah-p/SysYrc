@@ -73,6 +73,7 @@ pub enum Decl {
     }
 }
 
+#[derive(Debug)]
 pub enum InitList {
     Expr(Expr),
     List(Vec<InitList>),

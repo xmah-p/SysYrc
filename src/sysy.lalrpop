@@ -133,11 +133,6 @@ ConstDef: Decl = {
     }
 }
 
-ConstInitVal: InitVal = {
-    <e: ConstExpr> => InitVal::Exp(e),
-    "{" <list: Comma<ConstInitVal>> "}" => InitVal::List(list),
-}
-
 ConstExpr: Expr = {
     <e: Expr> => e,
 }
@@ -181,7 +176,7 @@ VarDef: Decl = {
 }
 
 InitVal: InitList = {
-    <e: Exp> => InitList::Expr(e),
+    <e: Expr> => InitList::Expr(e),
     "{" <list: Comma<InitVal>> "}" => InitList::List(list),
 }
 
@@ -190,13 +185,13 @@ ConstInitVal: InitList = {
     "{" <list: Comma<ConstInitVal>> "}" => InitList::List(list),
 }
 
-ArrayDims: Vec<Expr> = {
-    ("[" <e:ConstExp> "]")*
-}
+ArrayDim: Expr = "[" <e:ConstExpr> "]" => e;
 
-Indices: Vec<Expr> = {
-    ("[" <e:Exp> "]")*
-}
+ArrayDims: Vec<Expr> = ArrayDim*;
+
+Index: Expr = "[" <e:Expr> "]" => e;
+
+Indices: Vec<Expr> = Index*;
 
 Comma<T>: Vec<T> = { 
     // (<T> ",")* 匹配 0 个或多个 "T," 

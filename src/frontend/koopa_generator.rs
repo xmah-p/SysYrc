@@ -142,7 +142,7 @@ impl GenerateKoopa for Decl {
                 } else {
                     None
                 };
-                let var_type = match self.var_type {
+                let var_type = match var_type {
                     DataType::Int => Type::get_i32(),
                 };
                 // Global variable
@@ -617,6 +617,8 @@ impl Expr {
     }
 }
 
+/// Unwraps an InitList to get the contained Expr for variable declarations.
+/// The InitList must contain exactly one expression
 fn unwrap_init_list(init_list: &InitList) -> &Expr {
     match init_list {
         InitList::Expr(expr) => expr,
@@ -628,7 +630,7 @@ fn unwrap_init_list(init_list: &InitList) -> &Expr {
             match &ls[0] {
                 InitList::Expr(expr) => expr,
                 _ => panic!(
-                    "Variable declaration initializer list must contain exactly one expression"
+                    "Variable declaration initializer list must contain an expression"
                 ),
             }
         }
