@@ -667,7 +667,22 @@ impl Expr {
 
                 let val = match symbol {
                     SymbolInfo::Variable(val) => val,
-                    SymbolInfo::ConstVariable(val) => val,
+                    SymbolInfo::ConstVariable(val) => {
+                        // Koopa IR library does not allow global constant values
+                        // to be operated directly, for I don't know why...
+                        // This is a workaround to load the actual value into
+                        // the local context
+                        if val.is_global() {
+                            let kind = ctx.get_value_kind(val);
+                            let value = match kind {
+                                ValueKind::Integer(value) => value,
+                                _ => panic!("Constant global variable is not an integer"),
+                            };
+                            return ctx.new_value().integer(value.value());
+                        } else {
+                            return val;
+                        }
+                    }
                     SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
                 };
 
@@ -699,7 +714,7 @@ impl Expr {
                     }
                     TypeKind::Pointer(..) => {
                         // Array parameter decay: load to get the actual pointer
-                        // void f(int a[]) { 
+                        // void f(int a[]) {
                         //   g(a); // a decays to &a[0]
                         // }
                         let load_inst = ctx.new_value().load(ptr);
