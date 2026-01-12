@@ -30,10 +30,20 @@ impl GenerateKoopa for FuncDef {
             .params
             .iter()
             .map(|param| {
-                let ty = match param.param_type {
+                let base_type = match param.base_type {
                     DataType::Int => Type::get_i32(),
                 };
-                let name = format!("@{}", param.param_name);
+                let ty = match param.dims {
+                    Some(ref dims) => {
+                        let shape: Vec<usize> = dims
+                            .iter()
+                            .map(|dim_expr| dim_expr.compute_constexpr(ctx) as usize)
+                            .collect();
+                        Type::get_pointer(build_array_type(base_type, &shape))
+                    }
+                    None => base_type,
+                };
+                let name = format!("@{}", param.name);
                 (Some(name), ty)
             })
             .collect(); // Vector of (param_name, param_type) tuples
@@ -62,10 +72,20 @@ impl GenerateKoopa for FuncDef {
         for (i, arg) in self.params.iter().enumerate() {
             let value: Value = ctx.current_func().params()[i];
 
-            let ty = match arg.param_type {
+            let base_type = match arg.base_type {
                 DataType::Int => Type::get_i32(),
             };
-            let name = format!("%{}", arg.param_name);
+            let ty = match arg.dims {
+                Some(ref dims) => {
+                    let shape: Vec<usize> = dims
+                        .iter()
+                        .map(|dim_expr| dim_expr.compute_constexpr(ctx) as usize)
+                        .collect();
+                    Type::get_pointer(build_array_type(base_type, &shape))
+                }
+                None => base_type,
+            };
+            let name = format!("%{}", arg.name);
 
             let alloc_inst = ctx.new_value().alloc(ty);
             ctx.set_value_name(alloc_inst, name.clone());
@@ -75,7 +95,7 @@ impl GenerateKoopa for FuncDef {
             ctx.add_inst(store_inst);
 
             ctx.symbol_table
-                .insert(arg.param_name.clone(), SymbolInfo::Variable(alloc_inst));
+                .insert(arg.name.clone(), SymbolInfo::Variable(alloc_inst));
         }
 
         // Generate function body
@@ -413,7 +433,14 @@ impl GenerateKoopa for Stmt {
 }
 
 impl Expr {
-    pub fn generate_lval_addr(mut ptr: Value, indices: &Vec<Expr>, ctx: &mut KoopaContext) -> Value {
+    /// Generate the address of an LVal expression
+    /// If the lval is the array itself (indices is empty), returns ptr
+    /// Else, returns the address of the indexed element (result of getptr/getelemptr) 
+    pub fn generate_lval_addr(
+        mut ptr: Value,
+        indices: &Vec<Expr>,
+        ctx: &mut KoopaContext,
+    ) -> Value {
         let ty = ctx.get_value_type(ptr);
 
         // Mark whether to use getptr for the first dimension
@@ -432,6 +459,7 @@ impl Expr {
             if i == 0 && use_getptr {
                 ptr = ctx.new_value().get_ptr(ptr, idx_val);
             } else {
+                println!("this should be called");
                 ptr = ctx.new_value().get_elem_ptr(ptr, idx_val);
             }
             ctx.add_inst(ptr);
@@ -655,6 +683,13 @@ impl Expr {
                         let load_inst = ctx.new_value().load(ptr);
                         ctx.add_inst(load_inst);
                         load_inst
+                    }
+                    TypeKind::Array(..) => {
+                        // Decay to pointer to the first element
+                        let idx = ctx.new_value().integer(0);
+                        let getelemptr = ctx.new_value().get_elem_ptr(ptr, idx);
+                        ctx.add_inst(getelemptr);
+                        getelemptr
                     }
                     _ => ptr,
                 }

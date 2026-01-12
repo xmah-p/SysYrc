@@ -33,10 +33,17 @@ FuncDef: FuncDef = {
     },
 };
 
+FuncArrayPart: Vec<Expr> = {
+    "[" "]" <d:ArrayDims> => d
+}
+
 FuncFParam: FuncFParam = {
-    <param_type: DataType> <param_name: Ident> => FuncFParam {
-        param_type,
-        param_name,
+    <t: DataType> <id: Ident> <arr: FuncArrayPart?> => {
+        FuncFParam {
+            base_type: t,
+            name: id,
+            dims: arr,
+        }
     }
 }
 

@@ -32,8 +32,9 @@ pub struct FuncDef {
 
 #[derive(Debug)]
 pub struct FuncFParam {
-    pub param_type: DataType,
-    pub param_name: String,
+    pub base_type: DataType,
+    pub name: String,
+    pub dims: Option<Vec<Expr>>, // None if not an array
 }
 
 #[derive(Debug)]
