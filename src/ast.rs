@@ -123,7 +123,7 @@ pub enum Expr {
     // Their values will be resolved during constant expression evaluation
     LVal {
         name: String,
-        indices: Vec<Expr>,    // Empty if not an array
+        indices: Option<Vec<Expr>>,    // Empty if not an array
     },
     Number(i32),
     Call {

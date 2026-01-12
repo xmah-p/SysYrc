@@ -276,8 +276,12 @@ impl GenerateKoopa for Stmt {
                     SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
                 };
 
-                let ptr = Expr::generate_lval_addr(val, indices, ctx);
                 let value = expr.generate(ctx);
+                let ptr = if let Some(indices) = indices {
+                    Expr::generate_lval_addr(val, indices, ctx)
+                } else {
+                    val
+                };
                 let store_inst = ctx.new_value().store(value, ptr);
                 ctx.add_inst(store_inst);
             }
@@ -433,18 +437,15 @@ impl GenerateKoopa for Stmt {
 }
 
 impl Expr {
-    /// Generate the address of an LVal expression
-    /// If the lval is the array itself (indices is empty), returns ptr
-    /// Else, returns the address of the indexed element (result of getptr/getelemptr)
+    /// Generate the address of an array indexing operation (i.e. the getptr/getelemptr instructions)
     pub fn generate_lval_addr(
         mut ptr: Value,
         indices: &Vec<Expr>,
         ctx: &mut KoopaContext,
     ) -> Value {
-        let ty = ctx.get_value_type(ptr);
-
         // Mark whether to use getptr for the first dimension
         // (for function parameters like int a[])
+        let ty = ctx.get_value_type(ptr);
         let mut use_getptr = false;
         if KoopaContext::is_pointer_to_pointer(&ty) {
             let load = ctx.new_value().load(ptr);
@@ -459,7 +460,6 @@ impl Expr {
             if i == 0 && use_getptr {
                 ptr = ctx.new_value().get_ptr(ptr, idx_val);
             } else {
-                println!("this should be called");
                 ptr = ctx.new_value().get_elem_ptr(ptr, idx_val);
             }
             ctx.add_inst(ptr);
@@ -510,7 +510,7 @@ impl Expr {
                 let SymbolInfo::ConstVariable(var) = addr else {
                     panic!("Cannot use non-constant variable in constant expression");
                 };
-                if !indices.is_empty() {
+                if indices.is_some() {
                     panic!("Constant variable cannot be an array in constant expression");
                 }
                 let v = ctx.get_value_kind(var);
@@ -671,7 +671,11 @@ impl Expr {
                     SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
                 };
 
-                let ptr = Expr::generate_lval_addr(val, indices, ctx);
+                let ptr = if let Some(indices) = indices {
+                    Expr::generate_lval_addr(val, indices, ctx)
+                } else {
+                    val
+                };
                 let ptr_type = ctx.get_value_type(ptr);
                 let target_type = match ptr_type.kind() {
                     TypeKind::Pointer(inner) => inner,
@@ -680,28 +684,27 @@ impl Expr {
 
                 match target_type.kind() {
                     TypeKind::Int32 => {
-                        // [TODO] 修改 generate_lval_addr 以处理参数为数组的情况
-                        let is_param_ptr = if let SymbolInfo::Variable(alloc_val) = symbol {
-                            let alloc_ty = ctx.get_value_type(alloc_val);
-                            KoopaContext::is_pointer_to_pointer(&alloc_ty) // 检查是否是 int a[] 参数
-                        } else {
-                            false
-                        };
-                        if is_param_ptr && indices.is_empty() {
-                            ptr
-                        } else {
-                            // 否则（普通变量，或者 a[1] 这种已经取了下标的），它是左值，需要 load
-                            let load_inst = ctx.new_value().load(ptr);
-                            ctx.add_inst(load_inst);
-                            load_inst
-                        }
+                        let load_inst = ctx.new_value().load(ptr);
+                        ctx.add_inst(load_inst);
+                        load_inst
                     }
                     TypeKind::Array(..) => {
-                        // Decay to pointer to the first element
+                        // Array decay: getelemptr to first element
+                        // int a[10];
+                        // f(a); // a decays to &a[0]
                         let idx = ctx.new_value().integer(0);
                         let getelemptr = ctx.new_value().get_elem_ptr(ptr, idx);
                         ctx.add_inst(getelemptr);
                         getelemptr
+                    }
+                    TypeKind::Pointer(..) => {
+                        // Array parameter decay: load to get the actual pointer
+                        // void f(int a[]) { 
+                        //   g(a); // a decays to &a[0]
+                        // }
+                        let load_inst = ctx.new_value().load(ptr);
+                        ctx.add_inst(load_inst);
+                        load_inst
                     }
                     _ => ptr,
                 }

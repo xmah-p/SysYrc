@@ -369,7 +369,7 @@ BinaryOp: BinaryOp = {
 };
 
 LVal: Expr = {
-    <id: Ident> <idxs: Indices> => Expr::LVal { name: id, indices: idxs },
+    <id: Ident> <idxs: Indices> => Expr::LVal { name: id, indices: if idxs.is_empty() { None } else { Some(idxs) } },
 }
 
 Number: i32 = <num: IntConst> => <>;

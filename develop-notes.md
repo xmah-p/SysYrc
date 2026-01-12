@@ -8,7 +8,7 @@ docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/comp
 # 启动 docker 容器，挂载项目目录到容器内
 docker run -it --rm -v "D:/wksp/compilers/SysYrc":"//root/compiler" maxxing/compiler-dev bash
 autotest -koopa -s lv1 /root/compiler
-cd /opt/bin/testcases/lv6/    # 查看测试用例
+cd /opt/bin/testcases/lv9/    # 查看测试用例
 
 cargo run -- -koopa hello.c -o hello.s
 cargo run -- -riscv hello.c -o hello.o
