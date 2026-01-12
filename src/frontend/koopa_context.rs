@@ -1,5 +1,5 @@
 use koopa::ir::builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder};
-use koopa::ir::entities::{ValueKind};
+use koopa::ir::entities::ValueKind;
 use koopa::ir::*;
 
 use crate::frontend::symbol_table::*;
@@ -66,6 +66,28 @@ impl<'a> KoopaContext<'a> {
             self.program.borrow_value(value).kind().clone()
         } else {
             self.current_func().dfg().value(value).kind().clone()
+        }
+    }
+
+    pub fn get_value_type(&self, value: Value) -> Type {
+        if value.is_global() {
+            self.program.borrow_value(value).ty().clone()
+        } else {
+            self.current_func().dfg().value(value).ty().clone()
+        }
+    }
+
+    pub fn is_pointer_to_pointer(ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Pointer(inner) => matches!(inner.kind(), TypeKind::Pointer(_)),
+            _ => false,
+        }
+    }
+
+    pub fn is_pointer_to_array(ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Pointer(inner) => matches!(inner.kind(), TypeKind::Array(_, _)),
+            _ => false,
         }
     }
 

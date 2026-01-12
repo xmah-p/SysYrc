@@ -117,9 +117,9 @@ impl GenerateKoopa for Decl {
     fn generate(&self, ctx: &mut KoopaContext) -> () {
         match self {
             Decl::Const {
-                var_type,
                 var_name,
                 init_list,
+                ..
             } => {
                 let init_expr = unwrap_init_list(init_list);
 
@@ -248,23 +248,16 @@ impl GenerateKoopa for Stmt {
                 }
             } // Stmt::Return
             Stmt::Assign { lval, expr } => {
-                let addr: SymbolInfo = ctx
-                    .symbol_table
-                    .lookup(lval)
-                    .expect(&format!("Variable {} not found in symbol table", lval));
-                match addr {
-                    SymbolInfo::ConstVariable(_) => {
-                        panic!("Cannot assign to a constant variable");
-                    }
-                    SymbolInfo::Variable(var_addr) => {
-                        let expr_value = expr.generate(ctx);
-                        let store_inst = ctx.new_value().store(expr_value, var_addr);
-                        ctx.add_inst(store_inst);
-                    }
-                    SymbolInfo::Function(_) => {
-                        unreachable!()
+                if let Expr::LVal { name, .. } = lval {
+                    let symbol = ctx.symbol_table.lookup(name).unwrap();
+                    if matches!(symbol, SymbolInfo::ConstVariable(_)) {
+                        panic!("Cannot assign to constant variable '{}'", name);
                     }
                 }
+                let ptr = lval.generate_lval_addr(ctx);
+                let value = expr.generate(ctx);
+                let store_inst = ctx.new_value().store(value, ptr);
+                ctx.add_inst(store_inst);
             } // Stmt::Assign
             Stmt::Expression { expr } => {
                 if let Some(expr) = expr {
@@ -412,6 +405,49 @@ impl GenerateKoopa for Stmt {
 }
 
 impl Expr {
+    pub fn generate_lval_addr(&self, ctx: &mut KoopaContext) -> Value {
+        let (name, indices) = match self {
+            Expr::LVal { name, indices } => (name, indices),
+            _ => panic!("generate_lval_addr called on non-LVal expression"),
+        };
+        let symbol = ctx
+            .symbol_table
+            .lookup(name)
+            .expect(&format!("Variable {} not found", name));
+
+        let val = match symbol {
+            SymbolInfo::Variable(val) => val,
+            SymbolInfo::ConstVariable(val) => val,
+            SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
+        };
+
+        let mut ptr = val;
+        let ty = ctx.get_value_type(ptr);
+
+        // Mark whether to use getptr for the first dimension
+        // (for function parameters like int a[])
+        let mut use_getptr = false;
+        if KoopaContext::is_pointer_to_pointer(&ty) {
+            let load = ctx.new_value().load(ptr);
+            ctx.add_inst(load);
+            ptr = load;
+            use_getptr = true;
+        }
+
+        for (i, index_expr) in indices.iter().enumerate() {
+            let idx_val = index_expr.generate(ctx);
+
+            if i == 0 && use_getptr {
+                ptr = ctx.new_value().get_ptr(ptr, idx_val);
+            } else {
+                ptr = ctx.new_value().get_elem_ptr(ptr, idx_val);
+            }
+            ctx.add_inst(ptr);
+        }
+
+        ptr
+    }
+
     pub fn compute_constexpr(&self, ctx: &KoopaContext) -> i32 {
         match self {
             Expr::Number(n) => *n,
@@ -448,7 +484,7 @@ impl Expr {
                 }
             }
             // Constant variables are also treated as LVal here
-            Expr::LVal(name) => {
+            Expr::LVal { name, indices } => {
                 let addr: SymbolInfo = ctx
                     .symbol_table
                     .lookup(name)
@@ -456,6 +492,9 @@ impl Expr {
                 let SymbolInfo::ConstVariable(var) = addr else {
                     panic!("Cannot use non-constant variable in constant expression");
                 };
+                if !indices.is_empty() {
+                    panic!("Constant variable cannot be an array in constant expression");
+                }
                 let v = ctx.get_value_kind(var);
                 let ValueKind::Integer(n) = v else {
                     panic!("Constant variable does not hold an integer value");
@@ -605,34 +644,21 @@ impl Expr {
                 }
             },
 
-            Expr::LVal { name, indices } => {
-                let addr: SymbolInfo = ctx
-                    .symbol_table
-                    .lookup(name)
-                    .expect(&format!("Variable {} not found in symbol table", name));
-                match addr {
-                    SymbolInfo::ConstVariable(val) => {
-                        // Koopa IR library does not allow global constant values
-                        // to be operated directly, for I don't know why...
-                        // This is a workaround to load the actual value into
-                        // the local context
-                        if val.is_global() {
-                            let kind = ctx.get_value_kind(val);
-                            let value = match kind {
-                                ValueKind::Integer(value) => value,
-                                _ => panic!("Constant global variable is not an integer"),
-                            };
-                            ctx.new_value().integer(value.value())
-                        } else {
-                            val
-                        }
-                    }
-                    SymbolInfo::Variable(val) => {
-                        let load_inst = ctx.new_value().load(val);
+            Expr::LVal { .. } => {
+                let ptr = self.generate_lval_addr(ctx);
+                let ptr_type = ctx.get_value_type(ptr);
+                let target_type = match ptr_type.kind() {
+                    TypeKind::Pointer(inner) => inner,
+                    _ => unreachable!("Result of getptr/getelemptr must be a pointer"),
+                };
+
+                match target_type.kind() {
+                    TypeKind::Int32 => {
+                        let load_inst = ctx.new_value().load(ptr);
                         ctx.add_inst(load_inst);
                         load_inst
                     }
-                    SymbolInfo::Function(_) => unreachable!(),
+                    _ => ptr,
                 }
             }
 

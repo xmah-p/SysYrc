@@ -2,46 +2,6 @@ grammar;
 
 use crate::ast::*;
 
-// grammar rules:
-// CompUnit    ::= FuncDef;
-
-// Decl          ::= ConstDecl | VarDecl;
-// ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
-// BType         ::= "int";
-// ConstDef      ::= IDENT "=" ConstInitVal;
-// ConstInitVal  ::= ConstExp;
-// ConstExp    ::= Exp;
-// VarDecl       ::= BType VarDef {"," VarDef} ";";
-// VarDef        ::= IDENT ["=" InitVal];
-// InitVal       ::= Exp;
-
-// FuncDef     ::= FuncType IDENT "(" ")" Block;
-// FuncType    ::= "int";
-
-// Block         ::= "{" {BlockItem} "}";
-// BlockItem     ::= Decl | Stmt;
-
-// Stmt        ::= "return" [Exp] ";";
-//                 | LVal "=" Exp ";";
-//                 | [Exp] ";";
-//                 | Block;
-
-// Exp         ::= LOrExp;
-// PrimaryExp  ::= "(" Exp ")" | Number;
-// PrimaryExp    ::= "(" Exp ")" | LVal | Number;
-// Number      ::= INT_CONST;
-// UnaryExp    ::= PrimaryExp | UnaryOp UnaryExp;
-// UnaryOp     ::= "+" | "-" | "!";
-// MulExp      ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
-// AddExp      ::= MulExp | AddExp ("+" | "-") MulExp;
-// RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
-// EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
-// LAndExp     ::= EqExp | LAndExp "&&" EqExp;
-// LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
-
-// LVal          ::= IDENT;
-
-
 // lexer rules
 match {
     r"\s*" => {},                // Ignore whitespace
@@ -375,7 +335,7 @@ UnaryExpr: Expr = {
 
 PrimaryExpr: Expr = {
     "(" <Expr> ")",
-    <lval: LVal> => Expr::LVal(lval),
+    <lval: LVal> => lval,
     <num:Number> => Expr::Number(num),
 }
 

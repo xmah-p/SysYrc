@@ -85,7 +85,7 @@ pub enum Stmt {
         expr: Option<Expr>,
     },
     Assign {
-        lval: String,
+        lval: Expr,
         expr: Expr,
     },
     Expression {

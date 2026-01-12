@@ -13,14 +13,14 @@ pub fn build_array_type(base_type: Type, dims: &[usize]) -> Type {
 }
 
 /// Helper struct to handle array initialization logic
-pub struct ArrayInitHelper<'a> {
-    ctx: &'a mut KoopaContext<'a>,
-    shape: &'a [usize], // Array dimensions [2, 3, 4]
+pub struct ArrayInitHelper<'init, 'ctx> {
+    ctx: &'init mut KoopaContext<'ctx>,
+    shape: &'init [usize], // Array dimensions [2, 3, 4]
     flat_size: usize,   // Total number of elements 24
 }
 
-impl<'a> ArrayInitHelper<'a> {
-    pub fn new(ctx: &'a mut KoopaContext, shape: &'a [usize]) -> Self {
+impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
+    pub fn new(ctx: &'init mut KoopaContext<'ctx>, shape: &'init [usize]) -> Self {
         let flat_size = shape.iter().product();
         Self {
             ctx,
@@ -49,8 +49,6 @@ impl<'a> ArrayInitHelper<'a> {
         cursor: &mut usize,
         result: &mut Vec<Value>,
     ) {
-        let dim_size = self.shape[current_dim];
-
         match current_init {
             InitList::Expr(expr) => {
                 if *cursor >= result.len() {
@@ -78,7 +76,8 @@ impl<'a> ArrayInitHelper<'a> {
                             // next_dim = 2 -> capacity = 4
                             // next_dim = 3 -> capacity = 1 (panic!)
                             loop {
-                                let next_capacity: usize = self.shape.iter().skip(next_dim).product();
+                                let next_capacity: usize =
+                                    self.shape.iter().skip(next_dim).product();
                                 if *cursor % next_capacity == 0 {
                                     break;
                                 }
@@ -140,7 +139,7 @@ impl<'a> ArrayInitHelper<'a> {
             let mut idx = i;
             let mut ptr = alloc_ptr;
 
-            for (dim_idx, &dim_size) in self.shape.iter().enumerate() {
+            for (dim_idx, &_dim_size) in self.shape.iter().enumerate() {
                 let stride: usize = self.shape.iter().skip(dim_idx + 1).product();
                 let current_idx = idx / stride;
                 idx %= stride;
