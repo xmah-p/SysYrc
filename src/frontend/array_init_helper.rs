@@ -90,6 +90,8 @@ impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
                                 }
                                 next_dim += 1;
                                 if next_dim > self.shape.len() {
+                                    println!("cursor: {}, shape: {:?}", cursor, self.shape);
+
                                     panic!(
                                         "ArrayInitHelper: cannot align cursor for nested init list"
                                     );
@@ -104,7 +106,10 @@ impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
                     }
                 }
 
-                let capacity: usize = self.shape.iter().skip(current_dim).product();
+                if current_dim == 0 {
+                    return;
+                }
+                let capacity: usize = self.shape.iter().skip(current_dim - 1).product();
 
                 let end_cursor = start_cursor + capacity;
                 if *cursor < end_cursor {
