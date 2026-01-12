@@ -204,7 +204,7 @@ impl GenerateKoopa for Decl {
                     let init = if let Some(_init_list) = init_list {
                         let mut helper = ArrayInitHelper::new(ctx, &shape);
                         let flat_vals = helper.flatten_init_list(init_list);
-                        helper.generate_global_init(&flat_vals)
+                        helper.generate_global_init(flat_vals)
                     } else {
                         // Default initialize to zero
                         ctx.new_global_value().zero_init(array_type.clone())
@@ -412,7 +412,7 @@ impl GenerateKoopa for Stmt {
 }
 
 impl Expr {
-    fn compute_constexpr(&self, ctx: &KoopaContext) -> i32 {
+    pub fn compute_constexpr(&self, ctx: &KoopaContext) -> i32 {
         match self {
             Expr::Number(n) => *n,
             Expr::Unary { op, expr } => {
@@ -471,7 +471,7 @@ impl Expr {
         }
     }
 
-    fn generate(&self, ctx: &mut KoopaContext) -> Value {
+    pub fn generate(&self, ctx: &mut KoopaContext) -> Value {
         match self {
             Expr::Number(n) => ctx.new_value().integer(*n),
             Expr::Binary { op, lhs, rhs } => {

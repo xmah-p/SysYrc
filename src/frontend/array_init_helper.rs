@@ -1,6 +1,6 @@
-use crate::frontend::koopa_context::KoopaContext;
 use crate::ast::*;
-
+use crate::frontend::koopa_context::KoopaContext;
+use koopa::ir::{builder_traits::*, *};
 
 /// Builds a Koopa array type bottom up
 /// Input: base_type=i32, dims=[2, 3] -> 输出: [[i32, 3], 2]
@@ -14,7 +14,7 @@ pub fn build_array_type(base_type: Type, dims: &[usize]) -> Type {
 
 /// Helper struct to handle array initialization logic
 pub struct ArrayInitHelper<'a> {
-    ctx: &'a mut KoopaContext,
+    ctx: &'a mut KoopaContext<'a>,
     shape: &'a [usize], // Array dimensions [2, 3, 4]
     flat_size: usize,   // Total number of elements 24
 }
@@ -29,64 +29,128 @@ impl<'a> ArrayInitHelper<'a> {
         }
     }
 
-    /// 核心逻辑：将 InitList 转换为线性的数值列表
-    /// 如果是 Global，返回 Vec<i32> (常量)
-    /// 如果是 Local，我们通常也需要先算出这个列表，如果是变量则生成 Load 指令
-    /// 这里简化处理，假设我们能得到一个扁平的 `Vec<Option<Value>>`
-    /// None 表示需要补零，Some 表示显式初始化
     pub fn flatten_init_list(&mut self, init: &Option<InitList>) -> Vec<Value> {
-        // [TODO]: 这里需要实现那个复杂的递归填充算法 (Flatten + Padding)
-        // 算法思路：
-        // 1. 维护一个 cursor 指向当前扁平数组的索引
-        // 2. 递归遍历 InitList
-        // 3. 遇到 '{' 进入下一维，结束时 cursor 需要对齐到该维度的步长
-        // 4. 返回一个长度为 self.flat_size 的 Vec，未填充部分填入 Zero (Const 0)
+        let mut result = Vec::with_capacity(self.flat_size);
+        let mut cursor = 0;
+        if let Some(init_list) = init {
+            self.flatten_recursive(init_list, 0, &mut cursor, &mut result);
+        }
+        // Fill remaining with zeros
+        while result.len() < self.flat_size {
+            result.push(self.ctx.new_value().integer(0));
+        }
+        result
+    }
 
-        // int arr[2][3][4] = {1, 2, 3, 4, {5}, {6}, {7, 8}};
-        // shape = [2, 3, 4], flat_size = 24
-        // flatten 结果应为：
-        // [1, 2, 3, 4, 5, 0, 0, 0, 6, 0, 0, 0, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        vec![self.ctx.new_value().integer(0); self.flat_size]
+    fn flatten_recursive(
+        &mut self,
+        current_init: &InitList,
+        current_dim: usize,
+        cursor: &mut usize,
+        result: &mut Vec<Value>,
+    ) {
+        let dim_size = self.shape[current_dim];
+
+        match current_init {
+            InitList::Expr(expr) => {
+                if *cursor >= result.len() {
+                    return;
+                }
+                let val = if self.ctx.symbol_table.is_global_scope() {
+                    let int_val = expr.compute_constexpr(self.ctx);
+                    self.ctx.new_value().integer(int_val)
+                } else {
+                    expr.generate(self.ctx)
+                };
+
+                result[*cursor] = val;
+                *cursor += 1;
+            }
+            InitList::List(list) => {
+                let start_cursor = *cursor;
+
+                for item in list {
+                    match item {
+                        InitList::List(_) => {
+                            let mut next_dim = current_dim + 1;
+                            // int[2][3][4]
+                            // next_dim = 1 -> capacity = 3*4=12
+                            // next_dim = 2 -> capacity = 4
+                            // next_dim = 3 -> capacity = 1 (panic!)
+                            loop {
+                                let next_capacity: usize = self.shape.iter().skip(next_dim).product();
+                                if *cursor % next_capacity == 0 {
+                                    break;
+                                }
+                                next_dim += 1;
+                                if next_dim >= self.shape.len() {
+                                    panic!(
+                                        "ArrayInitHelper: cannot align cursor for nested init list"
+                                    );
+                                }
+                            }
+
+                            self.flatten_recursive(item, next_dim, cursor, result)
+                        }
+                        InitList::Expr(_) => {
+                            self.flatten_recursive(item, current_dim, cursor, result)
+                        }
+                    }
+                }
+
+                let capacity: usize = self.shape.iter().skip(current_dim).product();
+
+                let end_cursor = start_cursor + capacity;
+                if *cursor < end_cursor {
+                    *cursor = end_cursor;
+                }
+            }
+        }
     }
 
     /// Generate aggregate initializer for global arrays
-    pub fn generate_global_init(&mut self, flat_values: &[Value]) -> Value {
-        // 全局初始值必须是 Aggregate 嵌套结构
-        // 需要按照 shape 从后往前折叠 flat_values
-        // Koopa API: ctx.new_global_value().aggregate(vec![...])
-        // [TODO]: 实现 Aggregate 构建逻辑
-        // 占位返回：
-        self.ctx.new_global_value().zero_init(Type::get_i32())
+    pub fn generate_global_init(&mut self, flat_values: Vec<Value>) -> Value {
+        if flat_values.is_empty() {
+            return self.ctx.new_global_value().zero_init(Type::get_i32()); // Should not happen given logic
+        }
+
+        let mut current_level_values = flat_values;
+
+        // shape: [2, 3, 4]
+        // 1. chunks(4) -> aggregate -> new values (size 2*3)
+        // 2. chunks(3) -> aggregate -> new values (size 2)
+        // 3. chunks(2) -> aggregate -> new values (size 1)
+        for &dim_size in self.shape.iter().rev() {
+            let mut next_level_values = Vec::new();
+
+            for chunk in current_level_values.chunks(dim_size) {
+                let agg = self.ctx.new_global_value().aggregate(chunk.to_vec());
+                next_level_values.push(agg);
+            }
+
+            current_level_values = next_level_values;
+        }
+
+        current_level_values[0]
     }
 
     /// Generate store instructions for local array initialization
     pub fn generate_local_init(&mut self, alloc_ptr: Value, flat_values: &[Value]) {
         for (i, &val) in flat_values.iter().enumerate() {
-            // 优化：如果是 0 且数组已经是 alloc 出来的（默认未定义，但 Koopa 模拟器通常不清零）
-            // SysY 标准要求局部数组初始化时，未显式初始化的部分补 0。
-            // 所以即使是 0 也要 store，除非你用了 memset。
-
-            // 1. 计算多维索引
-            // 例如 shape=[2, 3], i=3 -> indices=[1, 0]
             let mut idx = i;
             let mut ptr = alloc_ptr;
 
-            // 2. 生成 getelemptr 链
             for (dim_idx, &dim_size) in self.shape.iter().enumerate() {
-                // 计算当前维度的跨度 (stride)
                 let stride: usize = self.shape.iter().skip(dim_idx + 1).product();
                 let current_idx = idx / stride;
                 idx %= stride;
 
                 let idx_val = self.ctx.new_value().integer(current_idx as i32);
 
-                // 注意：第一维如果是指针(参数)用 getptr，如果是数组(alloc)用 getelemptr
-                // 这里 alloc_ptr 是数组指针，所以全程 getelemptr
                 ptr = self.ctx.new_value().get_elem_ptr(ptr, idx_val);
                 self.ctx.add_inst(ptr);
             }
 
-            // 3. Store
             let store = self.ctx.new_value().store(val, ptr);
             self.ctx.add_inst(store);
         }
