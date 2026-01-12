@@ -1,6 +1,7 @@
 mod koopa_context;
 mod koopa_generator;
 mod symbol_table;
+mod array_init_helper;
 
 use std::io;
 

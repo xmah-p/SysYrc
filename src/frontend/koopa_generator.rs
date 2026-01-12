@@ -1,5 +1,7 @@
 use crate::ast::{BinaryOp as AstBinaryOp, *};
-use crate::frontend::{koopa_context::KoopaContext, symbol_table::SymbolInfo};
+use crate::frontend::{
+    array_init_helper::*, koopa_context::KoopaContext, symbol_table::SymbolInfo,
+};
 use koopa::ir::{builder_traits::*, values::BinaryOp as KoopaBinaryOp, *};
 
 /// Trait for generating Koopa IR entities
@@ -121,16 +123,14 @@ impl GenerateKoopa for Decl {
             } => {
                 let init_expr = unwrap_init_list(init_list);
 
-                let result: i32 = init_expr.compute_constexpr(ctx);
-                let init = if ctx.symbol_table.is_global_scope() {
-                    // Global constant variable
-                    ctx.new_global_value().integer(result)
+                let init_value: i32 = init_expr.compute_constexpr(ctx);
+                let init_handle = if ctx.symbol_table.is_global_scope() {
+                    ctx.new_global_value().integer(init_value)
                 } else {
-                    // Local constant variable
-                    ctx.new_value().integer(result)
+                    ctx.new_value().integer(init_value)
                 };
                 ctx.symbol_table
-                    .insert(var_name.clone(), SymbolInfo::ConstVariable(init));
+                    .insert(var_name.clone(), SymbolInfo::ConstVariable(init_handle));
             }
             Decl::Var {
                 var_type,
@@ -183,13 +183,56 @@ impl GenerateKoopa for Decl {
                 var_name,
                 dims,
                 init_list,
-            } => {}
-            Decl::Array {
+            }
+            | Decl::Array {
                 var_type,
                 var_name,
                 dims,
                 init_list,
-            } => {}
+            } => {
+                let shape: Vec<usize> = dims
+                    .iter()
+                    .map(|dim_expr| dim_expr.compute_constexpr(ctx) as usize)
+                    .collect();
+                let elem_type = match var_type {
+                    DataType::Int => Type::get_i32(),
+                };
+                // Initialization for local arrays: getelemptr + store
+                let array_type = build_array_type(elem_type.clone(), &shape);
+                if ctx.symbol_table.is_global_scope() {
+                    // Global array
+                    let init = if let Some(_init_list) = init_list {
+                        let mut helper = ArrayInitHelper::new(ctx, &shape);
+                        let flat_vals = helper.flatten_init_list(init_list);
+                        helper.generate_global_init(&flat_vals)
+                    } else {
+                        // Default initialize to zero
+                        ctx.new_global_value().zero_init(array_type.clone())
+                    };
+
+                    let alloc_ptr = ctx.new_global_value().global_alloc(init);
+                    // No need to append scope level to global variable names
+                    ctx.set_value_name(alloc_ptr, format!("@{}", var_name));
+                    ctx.symbol_table
+                        .insert(var_name.clone(), SymbolInfo::Variable(alloc_ptr));
+                } else {
+                    // Local array
+                    let alloc_ptr = ctx.new_value().alloc(array_type.clone());
+                    // Koopa IR value names must be unique
+                    let unique_name = format!("@{}_{}", var_name, ctx.symbol_table.level());
+                    ctx.set_value_name(alloc_ptr, unique_name);
+                    ctx.add_inst(alloc_ptr);
+
+                    // If there is an initializer, calculate and store the values
+                    if let Some(_init_list) = init_list {
+                        let mut helper = ArrayInitHelper::new(ctx, &shape);
+                        let flat_vals = helper.flatten_init_list(init_list);
+                        helper.generate_local_init(alloc_ptr, &flat_vals);
+                    }
+                    ctx.symbol_table
+                        .insert(var_name.clone(), SymbolInfo::Variable(alloc_ptr));
+                }
+            }
         };
     }
 }
@@ -561,8 +604,8 @@ impl Expr {
                     inst
                 }
             },
-            
-            Expr::LVal {name, indices} => {
+
+            Expr::LVal { name, indices } => {
                 let addr: SymbolInfo = ctx
                     .symbol_table
                     .lookup(name)
@@ -591,7 +634,7 @@ impl Expr {
                     }
                     SymbolInfo::Function(_) => unreachable!(),
                 }
-            },
+            }
 
             Expr::Call { func_name, args } => {
                 let symbol_info = ctx
@@ -629,9 +672,7 @@ fn unwrap_init_list(init_list: &InitList) -> &Expr {
             }
             match &ls[0] {
                 InitList::Expr(expr) => expr,
-                _ => panic!(
-                    "Variable declaration initializer list must contain an expression"
-                ),
+                _ => panic!("Variable declaration initializer list must contain an expression"),
             }
         }
     }
