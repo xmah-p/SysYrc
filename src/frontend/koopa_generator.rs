@@ -123,11 +123,7 @@ impl GenerateKoopa for Decl {
             } => {
                 let init_expr = unwrap_init_list(init_list);
                 let init_value: i32 = init_expr.compute_constexpr(ctx);
-                let init_handle = if ctx.symbol_table.is_global_scope() {
-                    ctx.new_global_value().integer(init_value)
-                } else {
-                    ctx.new_value().integer(init_value)
-                };
+                let init_handle = ctx.new_integer_value(init_value);
                 ctx.symbol_table
                     .insert(var_name.clone(), SymbolInfo::ConstVariable(init_handle));
             }

@@ -1,6 +1,6 @@
 use koopa::ir::builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder};
 use koopa::ir::entities::ValueKind;
-use koopa::ir::*;
+use koopa::ir::{builder_traits::*, *};
 
 use crate::frontend::symbol_table::*;
 
@@ -218,6 +218,14 @@ impl<'a> KoopaContext<'a> {
 
     pub fn new_global_value(&mut self) -> GlobalBuilder {
         self.program.new_value()
+    }
+
+    pub fn new_integer_value(&mut self, val: i32) -> Value {
+        if self.symbol_table.is_global_scope() {
+            self.new_global_value().integer(val)
+        } else {
+            self.new_value().integer(val)
+        }
     }
 
     /// Creates a new basic block in the DFG of func

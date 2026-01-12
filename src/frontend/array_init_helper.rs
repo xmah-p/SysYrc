@@ -30,11 +30,7 @@ impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
     }
 
     pub fn flatten_init_list(&mut self, init: &Option<InitList>) -> Vec<Value> {
-        let zero_val = if self.ctx.symbol_table.is_global_scope() {
-            self.ctx.new_global_value().integer(0)
-        } else {
-            self.ctx.new_value().integer(0)
-        };
+        let zero_val = self.ctx.new_integer_value(0);
         let mut result = vec![zero_val; self.flat_size];
         let mut cursor = 0;
         if let Some(init_list) = init {
