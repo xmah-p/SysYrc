@@ -1,8 +1,5 @@
+use koopa::ir::{Function, Value};
 use std::collections::HashMap;
-use koopa::ir::{
-    Value,
-    Function,
-};
 
 /// Information about a variable in the symbol table
 /// For constant variables, their values can be calculated at compile time.
@@ -23,8 +20,8 @@ pub enum SymbolInfo {
 /// Top-level table has None as outer
 /// Only the most inner table is owned by KoopaContext
 pub struct SymbolTable {
-    level: i32,                            // Scope level for variable shadowing   
-    table: HashMap<String, SymbolInfo>,    // Symbol names DO NOT start with `@` or `%`!
+    level: i32,                         // Scope level for variable shadowing
+    table: HashMap<String, SymbolInfo>, // Symbol names DO NOT start with `@` or `%`!
     outer: Option<Box<SymbolTable>>,
 }
 
@@ -42,11 +39,15 @@ impl SymbolTable {
         self.level
     }
 
-    pub fn lookup(&self, name: &str) -> Option<SymbolInfo> {
+    pub fn lookup(&self, name: &str) -> SymbolInfo {
+        self.lookup_recursive(name).expect(&format!("Variable {} not found", name))
+    }
+
+    fn lookup_recursive(&self, name: &str) -> Option<SymbolInfo> {
         if let Some(&val) = self.table.get(name) {
             Some(val)
         } else if let Some(outer_table) = &self.outer {
-            outer_table.lookup(name)
+            outer_table.lookup_recursive(name)
         } else {
             None
         }

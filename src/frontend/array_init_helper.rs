@@ -16,7 +16,7 @@ pub fn build_array_type(base_type: Type, dims: &[usize]) -> Type {
 pub struct ArrayInitHelper<'init, 'ctx> {
     ctx: &'init mut KoopaContext<'ctx>,
     shape: &'init [usize], // Array dimensions [2, 3, 4]
-    flat_size: usize,   // Total number of elements 24
+    flat_size: usize,      // Total number of elements 24
 }
 
 impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
@@ -30,18 +30,24 @@ impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
     }
 
     pub fn flatten_init_list(&mut self, init: &Option<InitList>) -> Vec<Value> {
-        let mut result = Vec::with_capacity(self.flat_size);
+        let zero_val = if self.ctx.symbol_table.is_global_scope() {
+            self.ctx.new_global_value().integer(0)
+        } else {
+            self.ctx.new_value().integer(0)
+        };
+        let mut result = vec![zero_val; self.flat_size];
         let mut cursor = 0;
         if let Some(init_list) = init {
             self.flatten_recursive(init_list, 0, &mut cursor, &mut result);
         }
-        // Fill remaining with zeros
-        while result.len() < self.flat_size {
-            result.push(self.ctx.new_value().integer(0));
-        }
         result
     }
 
+    /// Recursively flatten the InitList into a flat vector of Values
+    /// current_dim: current dimension in shape:
+    ///   - 0 means outside the array
+    ///   - 1 means first dimension
+    ///   - ...
     fn flatten_recursive(
         &mut self,
         current_init: &InitList,
@@ -56,7 +62,7 @@ impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
                 }
                 let val = if self.ctx.symbol_table.is_global_scope() {
                     let int_val = expr.compute_constexpr(self.ctx);
-                    self.ctx.new_value().integer(int_val)
+                    self.ctx.new_global_value().integer(int_val)
                 } else {
                     expr.generate(self.ctx)
                 };
@@ -72,17 +78,18 @@ impl<'init, 'ctx> ArrayInitHelper<'init, 'ctx> {
                         InitList::List(_) => {
                             let mut next_dim = current_dim + 1;
                             // int[2][3][4]
-                            // next_dim = 1 -> capacity = 3*4=12
-                            // next_dim = 2 -> capacity = 4
-                            // next_dim = 3 -> capacity = 1 (panic!)
+                            // next_dim = 1 -> capacity = 2 * 3 * 4 = 24
+                            // next_dim = 2 -> capacity = 3 * 4 = 12
+                            // next_dim = 3 -> capacity = 4
+                            // next_dim = 4 -> panic
                             loop {
                                 let next_capacity: usize =
-                                    self.shape.iter().skip(next_dim).product();
+                                    self.shape.iter().skip(next_dim - 1).product();
                                 if *cursor % next_capacity == 0 {
                                     break;
                                 }
                                 next_dim += 1;
-                                if next_dim >= self.shape.len() {
+                                if next_dim > self.shape.len() {
                                     panic!(
                                         "ArrayInitHelper: cannot align cursor for nested init list"
                                     );

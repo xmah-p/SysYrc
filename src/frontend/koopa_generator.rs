@@ -122,7 +122,6 @@ impl GenerateKoopa for Decl {
                 ..
             } => {
                 let init_expr = unwrap_init_list(init_list);
-
                 let init_value: i32 = init_expr.compute_constexpr(ctx);
                 let init_handle = if ctx.symbol_table.is_global_scope() {
                     ctx.new_global_value().integer(init_value)
@@ -197,10 +196,9 @@ impl GenerateKoopa for Decl {
                 let elem_type = match var_type {
                     DataType::Int => Type::get_i32(),
                 };
-                // Initialization for local arrays: getelemptr + store
                 let array_type = build_array_type(elem_type.clone(), &shape);
+
                 if ctx.symbol_table.is_global_scope() {
-                    // Global array
                     let init = if let Some(_init_list) = init_list {
                         let mut helper = ArrayInitHelper::new(ctx, &shape);
                         let flat_vals = helper.flatten_init_list(init_list);
@@ -246,29 +244,40 @@ impl GenerateKoopa for Stmt {
                     let inst: Value = ctx.new_value().ret(Some(value));
                     ctx.add_inst(inst);
                 }
-            } // Stmt::Return
+            }
+
             Stmt::Assign { lval, expr } => {
-                if let Expr::LVal { name, .. } = lval {
-                    let symbol = ctx.symbol_table.lookup(name).unwrap();
-                    if matches!(symbol, SymbolInfo::ConstVariable(_)) {
-                        panic!("Cannot assign to constant variable '{}'", name);
+                let Expr::LVal { name, indices } = lval else {
+                    panic!("Left-hand side of assignment must be an LVal");
+                };
+                let symbol = ctx.symbol_table.lookup(name);
+
+                let val = match symbol {
+                    SymbolInfo::Variable(val) => val,
+                    SymbolInfo::ConstVariable(_val) => {
+                        panic!("Cannot assign to constant variable '{}'", name)
                     }
-                }
-                let ptr = lval.generate_lval_addr(ctx);
+                    SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
+                };
+
+                let ptr = Expr::generate_lval_addr(val, indices, ctx);
                 let value = expr.generate(ctx);
                 let store_inst = ctx.new_value().store(value, ptr);
                 ctx.add_inst(store_inst);
-            } // Stmt::Assign
+            }
+
             Stmt::Expression { expr } => {
                 if let Some(expr) = expr {
                     let _ = expr.generate(ctx);
                 }
-            } // Stmt::Expression
+            }
+
             Stmt::Block { block } => {
                 ctx.symbol_table.enter_scope();
                 block.generate(ctx);
                 ctx.symbol_table.exit_scope();
-            } // Stmt::Block
+            }
+
             Stmt::If {
                 cond,
                 then_body,
@@ -341,7 +350,8 @@ impl GenerateKoopa for Stmt {
                 // End block
                 ctx.add_bb(end_bb);
                 ctx.set_current_bb(end_bb);
-            } // Stmt::If
+            }
+
             Stmt::While { cond, body } => {
                 // while (cond) { body }
                 // will be translated to:
@@ -389,39 +399,25 @@ impl GenerateKoopa for Stmt {
                 // End block
                 ctx.add_bb(end_bb);
                 ctx.set_current_bb(end_bb);
-            } // Stmt::While
+            }
+
             Stmt::Break => {
                 let target = ctx.get_current_loop_break_target();
                 let jump_inst = ctx.new_value().jump(target);
                 ctx.add_inst(jump_inst);
-            } // Stmt::Break
+            }
+
             Stmt::Continue => {
                 let target = ctx.get_current_loop_continue_target();
                 let jump_inst = ctx.new_value().jump(target);
                 ctx.add_inst(jump_inst);
-            } // Stmt::Continue
+            }
         }
     }
 }
 
 impl Expr {
-    pub fn generate_lval_addr(&self, ctx: &mut KoopaContext) -> Value {
-        let (name, indices) = match self {
-            Expr::LVal { name, indices } => (name, indices),
-            _ => panic!("generate_lval_addr called on non-LVal expression"),
-        };
-        let symbol = ctx
-            .symbol_table
-            .lookup(name)
-            .expect(&format!("Variable {} not found", name));
-
-        let val = match symbol {
-            SymbolInfo::Variable(val) => val,
-            SymbolInfo::ConstVariable(val) => val,
-            SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
-        };
-
-        let mut ptr = val;
+    pub fn generate_lval_addr(mut ptr: Value, indices: &Vec<Expr>, ctx: &mut KoopaContext) -> Value {
         let ty = ctx.get_value_type(ptr);
 
         // Mark whether to use getptr for the first dimension
@@ -485,10 +481,8 @@ impl Expr {
             }
             // Constant variables are also treated as LVal here
             Expr::LVal { name, indices } => {
-                let addr: SymbolInfo = ctx
-                    .symbol_table
-                    .lookup(name)
-                    .expect(&format!("Variable {} not found in symbol table", name));
+                let addr: SymbolInfo = ctx.symbol_table.lookup(name);
+
                 let SymbolInfo::ConstVariable(var) = addr else {
                     panic!("Cannot use non-constant variable in constant expression");
                 };
@@ -644,8 +638,16 @@ impl Expr {
                 }
             },
 
-            Expr::LVal { .. } => {
-                let ptr = self.generate_lval_addr(ctx);
+            Expr::LVal { name, indices } => {
+                let symbol = ctx.symbol_table.lookup(name);
+
+                let val = match symbol {
+                    SymbolInfo::Variable(val) => val,
+                    SymbolInfo::ConstVariable(val) => val,
+                    SymbolInfo::Function(_) => panic!("Function cannot be used as LVal"),
+                };
+
+                let ptr = Expr::generate_lval_addr(val, indices, ctx);
                 let ptr_type = ctx.get_value_type(ptr);
                 let target_type = match ptr_type.kind() {
                     TypeKind::Pointer(inner) => inner,
@@ -663,10 +665,7 @@ impl Expr {
             }
 
             Expr::Call { func_name, args } => {
-                let symbol_info = ctx
-                    .symbol_table
-                    .lookup(func_name)
-                    .expect("Function not found");
+                let symbol_info = ctx.symbol_table.lookup(func_name);
                 let SymbolInfo::Function(func) = symbol_info else {
                     panic!("Symbol is not a function");
                 };
