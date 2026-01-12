@@ -435,7 +435,7 @@ impl GenerateKoopa for Stmt {
 impl Expr {
     /// Generate the address of an LVal expression
     /// If the lval is the array itself (indices is empty), returns ptr
-    /// Else, returns the address of the indexed element (result of getptr/getelemptr) 
+    /// Else, returns the address of the indexed element (result of getptr/getelemptr)
     pub fn generate_lval_addr(
         mut ptr: Value,
         indices: &Vec<Expr>,
@@ -680,9 +680,21 @@ impl Expr {
 
                 match target_type.kind() {
                     TypeKind::Int32 => {
-                        let load_inst = ctx.new_value().load(ptr);
-                        ctx.add_inst(load_inst);
-                        load_inst
+                        // [TODO] 修改 generate_lval_addr 以处理参数为数组的情况
+                        let is_param_ptr = if let SymbolInfo::Variable(alloc_val) = symbol {
+                            let alloc_ty = ctx.get_value_type(alloc_val);
+                            KoopaContext::is_pointer_to_pointer(&alloc_ty) // 检查是否是 int a[] 参数
+                        } else {
+                            false
+                        };
+                        if is_param_ptr && indices.is_empty() {
+                            ptr
+                        } else {
+                            // 否则（普通变量，或者 a[1] 这种已经取了下标的），它是左值，需要 load
+                            let load_inst = ctx.new_value().load(ptr);
+                            ctx.add_inst(load_inst);
+                            load_inst
+                        }
                     }
                     TypeKind::Array(..) => {
                         // Decay to pointer to the first element
