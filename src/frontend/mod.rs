@@ -13,6 +13,7 @@ use koopa_generator::GenerateKoopa;
 
 
 pub fn translate_to_koopa(cu: crate::ast::CompUnit) -> Program {
+    koopa::ir::Type::set_ptr_size(4);
     let mut prog = Program::new();
     let mut context = KoopaContext::new(&mut prog);
     cu.generate(&mut context);

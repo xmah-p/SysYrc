@@ -35,25 +35,12 @@ impl<'a, W: Write> RiscvGenerator<'a, W> {
             let ValueKind::GlobalAlloc(alloc) = kind else {
                 unreachable!("Expected GlobalAlloc for global variable");
             };
-
-            let init = alloc.init();
-            let init_kind = self.get_global_value_kind(init);
-            match init_kind {
-                ValueKind::Integer(int) => {
-                    self.writer
-                        .write_directive("word", &[&int.value().to_string()])?;
-                }
-                ValueKind::ZeroInit(_) => {
-                    self.writer
-                        .write_directive("zero", &[&WORD_SIZE.to_string()])?;
-                }
-                _ => {
-                    unreachable!("Unsupported global initializer");
-                }
-            }
+            // Initialization
+            self.generate_global_init(alloc.init())?;
         }
         self.writer.write_blank_line()?;
 
+        // Generate text segment for functions
         self.writer.write_directive("text", &[])?;
         for &func in program.func_layout() {
             let func_data = program.func(func);
@@ -67,6 +54,26 @@ impl<'a, W: Write> RiscvGenerator<'a, W> {
         Ok(())
     }
 
+    fn generate_global_init(&mut self, init: Value) -> io::Result<()> {
+        let kind = self.get_global_value_kind(init);
+        let ty = self.get_global_value_type(init);
+        match kind {
+            ValueKind::Integer(int) => self
+                .writer
+                .write_directive("word", &[&int.value().to_string()]),
+            ValueKind::ZeroInit(_) => self
+                .writer
+                .write_directive("zero", &[&ty.size().to_string()]),
+            ValueKind::Aggregate(agg) => {
+                for &elem in agg.elems() {
+                    self.generate_global_init(elem)?;
+                }
+                Ok(())
+            }
+            _ => unreachable!("Unsupported global initializer"),
+        }
+    }
+
     fn get_global_value_name(&self, value: Value) -> String {
         self.program
             .borrow_value(value)
@@ -78,6 +85,10 @@ impl<'a, W: Write> RiscvGenerator<'a, W> {
 
     fn get_global_value_kind(&self, value: Value) -> ValueKind {
         self.program.borrow_value(value).kind().clone()
+    }
+
+    fn get_global_value_type(&self, value: Value) -> Type {
+        self.program.borrow_value(value).ty().clone()
     }
 }
 
@@ -208,6 +219,32 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                 // Does nothing here
             }
 
+            ValueKind::GetElemPtr(gep) => {
+                let src = gep.src();
+                let index = gep.index();
+                let src_type = self.get_value_type(src);
+                let step = match src_type.kind() {
+                    TypeKind::Pointer(base) => match base.kind() {
+                        TypeKind::Array(elem, _) => elem.size(),
+                        _ => base.size(),
+                    },
+                    _ => panic!("GetElemPtr src must be a pointer"),
+                };
+                self.generate_ptr_calc(value, src, index, step)?;
+            }
+
+            ValueKind::GetPtr(gp) => {
+                let src = gp.src();
+                let index = gp.index();
+                let src_type = self.get_value_type(src);
+
+                let step = match src_type.kind() {
+                    TypeKind::Pointer(base) => base.size(),
+                    _ => panic!("GetPtr src must be a pointer"),
+                };
+                self.generate_ptr_calc(value, src, index, step)?;
+            }
+
             ValueKind::Store(store) => {
                 let store_value = store.value();
                 let dest = store.dest();
@@ -262,6 +299,38 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         Ok(())
     }
 
+    /// Generate pointer calculation for GetElemPtr and GetPtr
+    /// dest = src + index * step
+    fn generate_ptr_calc(
+        &mut self,
+        dest: Value,
+        src: Value,
+        index: Value,
+        step: usize,
+    ) -> io::Result<()> {
+        self.load_value_to_reg(src, "t0")?;
+        self.load_value_to_reg(index, "t1")?;
+
+        if step != 1 {
+            if step.is_power_of_two() {
+                let shift = step.trailing_zeros();
+                self.gen
+                    .writer
+                    .write_inst("slli", &["t1", "t1", &shift.to_string()])?;
+            } else {
+                self.gen
+                    .writer
+                    .write_inst("li", &["t2", &step.to_string()])?;
+                self.gen.writer.write_inst("mul", &["t1", "t1", "t2"])?;
+            }
+        }
+        self.gen.writer.write_inst("add", &["t0", "t0", "t1"])?;
+        self.save_value_from_reg(dest, "t0")
+    }
+
+    /// Allocate space for the current function's stack frame by adjusting
+    /// `sp`. `t0` is used as a temporary register if the offset exceeds
+    /// the 12-bit immediate limit.
     fn generate_prologue(&mut self) -> io::Result<()> {
         let stack_size = self.stack_frame.get_stack_size();
         if stack_size == 0 {
@@ -277,6 +346,9 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         Ok(())
     }
 
+    /// Deallocate space for the current function's stack frame by adjusting
+    /// `sp`. `t0` is used as a temporary register if the offset exceeds
+    /// the 12-bit immediate limit.
     fn generate_epilogue(&mut self) -> io::Result<()> {
         let stack_size = self.stack_frame.get_stack_size();
         if stack_size == 0 {
@@ -306,6 +378,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         Ok(format!("0({})", tmp_reg))
     }
 
+    /// Save caller-saved registers (currently only `ra`) onto the stack
     fn save_caller_saved_regs(&mut self) -> io::Result<()> {
         let Some(ra_offset) = self.stack_frame.get_ra_offset() else {
             return Ok(());
@@ -314,6 +387,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         self.gen.writer.write_inst("sw", &["ra", &addr])
     }
 
+    /// Restore caller-saved registers (currently only `ra`) from the stack
     fn restore_caller_saved_regs(&mut self) -> io::Result<()> {
         let Some(ra_offset) = self.stack_frame.get_ra_offset() else {
             return Ok(());
@@ -322,14 +396,12 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         self.gen.writer.write_inst("lw", &["ra", &addr])
     }
 
+    /// Load a value (global or local) into a register
     fn load_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
         if value.is_global() {
+            // [TODO] buggy for arrays?
             let global_name = self.gen.get_global_value_name(value);
-            self.gen.writer.write_inst("la", &[reg, &global_name])?;
-            return self
-                .gen
-                .writer
-                .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")]);
+            return self.gen.writer.write_inst("la", &[reg, &global_name]);
         }
         // Non-global values reside in the stack frame
         let kind = self.get_value_kind(value);
