@@ -222,7 +222,11 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             ValueKind::GetElemPtr(gep) => {
                 let src = gep.src();
                 let index = gep.index();
-                let src_type = self.get_value_type(src);
+                let src_type = if src.is_global() {
+                    self.gen.get_global_value_type(src)
+                } else {
+                    self.get_value_type(src)
+                };
                 let step = match src_type.kind() {
                     TypeKind::Pointer(base) => match base.kind() {
                         TypeKind::Array(elem, _) => elem.size(),
@@ -236,7 +240,11 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             ValueKind::GetPtr(gp) => {
                 let src = gp.src();
                 let index = gp.index();
-                let src_type = self.get_value_type(src);
+                let src_type = if src.is_global() {
+                    self.gen.get_global_value_type(src)
+                } else {
+                    self.get_value_type(src)
+                };
 
                 let step = match src_type.kind() {
                     TypeKind::Pointer(base) => base.size(),
@@ -399,9 +407,12 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
     /// Load a value (global or local) into a register
     fn load_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
         if value.is_global() {
-            // [TODO] buggy for arrays?
             let global_name = self.gen.get_global_value_name(value);
             return self.gen.writer.write_inst("la", &[reg, &global_name]);
+            // return self
+            //     .gen
+            //     .writer
+            //     .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")]);
         }
         // Non-global values reside in the stack frame
         let kind = self.get_value_kind(value);
