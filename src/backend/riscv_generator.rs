@@ -256,29 +256,16 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             ValueKind::Store(store) => {
                 let store_value = store.value();
                 let dest = store.dest();
+
                 self.load_value_to_reg(store_value, "t0")?;
-                if dest.is_global() {
-                    let global_name = self.gen.get_global_value_name(dest);
-                    self.gen.writer.write_inst("la", &["t1", &global_name])?;
-                    self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
-                } else {
-                    let offset = self.stack_frame.get_stack_offset(dest);
-                    let addr: String = self.build_stk_addr_str(offset, "t1")?;
-                    self.gen.writer.write_inst("sw", &["t0", &addr])?;
-                }
+                self.load_value_to_reg(dest, "t1")?;
+                self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
             }
 
             ValueKind::Load(load) => {
                 let src = load.src();
-                if src.is_global() {
-                    let global_name = self.gen.get_global_value_name(src);
-                    self.gen.writer.write_inst("la", &["t0", &global_name])?;
-                    self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
-                } else {
-                    let offset = self.stack_frame.get_stack_offset(src);
-                    let addr: String = self.build_stk_addr_str(offset, "t0")?;
-                    self.gen.writer.write_inst("lw", &["t0", &addr])?;
-                }
+                self.load_value_to_reg(src, "t0")?;
+                self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
                 self.save_value_from_reg(value, "t0")?;
             }
 
@@ -436,6 +423,20 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                     let offset = (arg_index - 8) * WORD_SIZE + self.stack_frame.get_stack_size();
                     let addr: String = self.build_stk_addr_str(offset, reg)?;
                     self.gen.writer.write_inst("lw", &[reg, &addr])
+                }
+            }
+            ValueKind::Alloc(_) => {
+                let offset = self.stack_frame.get_stack_offset(value);
+
+                if offset >= -2048 && offset <= 2047 {
+                    self.gen
+                        .writer
+                        .write_inst("addi", &[reg, "sp", &offset.to_string()])
+                } else {
+                    self.gen
+                        .writer
+                        .write_inst("li", &[reg, &offset.to_string()])?;
+                    self.gen.writer.write_inst("add", &[reg, "sp", reg])
                 }
             }
             // Result of other instructions
