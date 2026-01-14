@@ -1,5 +1,5 @@
-use koopa::ir::entities::{FunctionData, Value, ValueKind};
-use std::cmp::max;
+use koopa::ir::entities::*;
+use koopa::ir::types::TypeKind;
 use std::collections::HashMap;
 
 use crate::backend::riscv_generator::WORD_SIZE;
@@ -29,6 +29,8 @@ impl StackFrame {
     /// 10th argument
     /// 9th argument
     /// Stack frame for Next function
+    /// 
+    /// [TODO] Correct I think.
     pub fn initialize(&mut self, func: &FunctionData) {
         self.values_map.clear();
 
@@ -39,11 +41,11 @@ impl StackFrame {
                 let inst_data = func.dfg().value(inst);
                 if let ValueKind::Call(call) = inst_data.kind() {
                     has_call = true;
-                    max_call_args = max(max_call_args, call.args().len());
+                    max_call_args = std::cmp::max(max_call_args, call.args().len());
                 }
             }
         }
-        let ra_size = if has_call { WORD_SIZE } else { 0 };
+        let ra_size = if has_call { WORD_SIZE } else { 0 }; // 4 bytes
         let call_args_size = if max_call_args > 8 {
             (max_call_args - 8) as i32 * WORD_SIZE
         } else {
@@ -54,15 +56,28 @@ impl StackFrame {
         for (&_, node) in func.layout().bbs() {
             for &inst in node.insts().keys() {
                 let inst_data = func.dfg().value(inst);
-                if !inst_data.ty().is_unit() {
-                    self.values_map.insert(inst, local_size + call_args_size);
-                    local_size += WORD_SIZE;
+                let ty = inst_data.ty();
+
+                if ty.is_unit() {
+                    continue;
                 }
+
+                let size = match inst_data.kind() {
+                    ValueKind::Alloc(_) => match ty.kind() {
+                        TypeKind::Pointer(base_ty) => base_ty.size(),
+                        _ => unreachable!("Alloc return type must be a pointer"),
+                    },
+                    _ => ty.size(),
+                };
+
+                self.values_map.insert(inst, local_size + call_args_size);
+                local_size += size as i32;
             }
         }
 
         let total_size = ra_size + local_size + call_args_size;
         self.stack_size = (total_size + 15) & !15; // Align to 16 bytes
+
         self.ra_offset = if has_call {
             Some(self.stack_size - ra_size)
         } else {

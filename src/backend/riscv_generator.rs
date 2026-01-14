@@ -150,9 +150,9 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                 // Load arguments into regs or stack
                 for (i, &arg) in args.iter().enumerate() {
                     if i < 8 {
-                        self.load_value_to_reg(arg, &format!("a{}", i))?;
+                        self.load_value_to_reg(arg, &format!("a{}", i), "t3")?;
                     } else {
-                        self.load_value_to_reg(arg, "t0")?;
+                        self.load_value_to_reg(arg, "t0", "t3")?;
                         let offset = (i as i32 - 8) * WORD_SIZE;
                         let addr = self.build_stk_addr_str(offset, "t1")?;
                         self.gen.writer.write_inst("sw", &["t0", &addr])?;
@@ -167,14 +167,14 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                 // Save return value if there is one
                 let value_type = self.get_value_type(value);
                 if !value_type.is_unit() {
-                    self.save_value_from_reg(value, "a0")?;
+                    self.save_value_from_reg(value, "a0", "t3")?;
                 }
             }
 
             ValueKind::Return(ret) => {
                 // Load return value into a0 if exists
                 if let Some(ret_value) = ret.value() {
-                    self.load_value_to_reg(ret_value, "a0")?;
+                    self.load_value_to_reg(ret_value, "a0", "t3")?;
                 }
                 self.restore_caller_saved_regs()?;
                 self.generate_epilogue()?;
@@ -183,8 +183,8 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             }
 
             ValueKind::Binary(bin) => {
-                self.load_value_to_reg(bin.lhs(), "t0")?;
-                self.load_value_to_reg(bin.rhs(), "t1")?;
+                self.load_value_to_reg(bin.lhs(), "t0", "t3")?;
+                self.load_value_to_reg(bin.rhs(), "t1", "t3")?;
 
                 let op_str = map_binary_op(bin.op());
                 match bin.op() {
@@ -211,7 +211,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                         }
                     }
                 }
-                self.save_value_from_reg(value, "t0")?;
+                self.save_value_from_reg(value, "t0", "t3")?;
             }
 
             ValueKind::Alloc(_) => {
@@ -246,15 +246,15 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             }
 
             ValueKind::Store(store) => {
-                self.load_value_to_reg(store.value(), "t0")?;
-                self.load_value_to_reg(store.dest(), "t1")?;
+                self.load_value_to_reg(store.value(), "t0", "t3")?;
+                self.load_value_to_reg(store.dest(), "t1", "t3")?;
                 self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
             }
 
             ValueKind::Load(load) => {
-                self.load_value_to_reg(load.src(), "t0")?;
+                self.load_value_to_reg(load.src(), "t0", "t3")?;
                 self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
-                self.save_value_from_reg(value, "t0")?;
+                self.save_value_from_reg(value, "t0", "t3")?;
             }
 
             ValueKind::Branch(branch) => {
@@ -262,7 +262,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
                 let true_bb = branch.true_bb();
                 let false_bb = branch.false_bb();
 
-                self.load_value_to_reg(cond, "t0")?;
+                self.load_value_to_reg(cond, "t0", "t3")?;
                 let true_bb_name = self.get_bb_name(true_bb);
                 let false_bb_name = self.get_bb_name(false_bb);
                 self.gen.writer.write_inst("bnez", &["t0", &true_bb_name])?;
@@ -291,8 +291,8 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         index: Value,
         step: usize,
     ) -> io::Result<()> {
-        self.load_value_to_reg(src, "t0")?;
-        self.load_value_to_reg(index, "t1")?;
+        self.load_value_to_reg(src, "t0", "t3")?; 
+        self.load_value_to_reg(index, "t1", "t3")?;
 
         if step != 1 {
             if step.is_power_of_two() {
@@ -308,7 +308,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             }
         }
         self.gen.writer.write_inst("add", &["t0", "t0", "t1"])?;
-        self.save_value_from_reg(dest, "t0")
+        self.save_value_from_reg(dest, "t0", "t3")
     }
 
     /// Allocate space for the current function's stack frame by adjusting
@@ -356,8 +356,8 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         }
         self.gen
             .writer
-            .write_inst("li", &["t0", &offset.to_string()])?;
-        self.gen.writer.write_inst("add", &[tmp_reg, "sp", "t0"])?;
+            .write_inst("li", &[tmp_reg, &offset.to_string()])?;
+        self.gen.writer.write_inst("add", &[tmp_reg, "sp", tmp_reg])?;
         Ok(format!("0({})", tmp_reg))
     }
 
@@ -387,7 +387,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
     ///   - For allocated variables, compute the address from `sp` and load.
     ///   - For other values, they should be results of other instructions and already stored on the stack.
     ///     Load them from the stack.
-    fn load_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
+    fn load_value_to_reg(&mut self, value: Value, reg: &str, tmp_reg: &str) -> io::Result<()> {
         if value.is_global() {
             let global_name = self.gen.get_global_value_name(value);
             return self.gen.writer.write_inst("la", &[reg, &global_name]);
@@ -434,7 +434,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             // They should have been already stored on the stack
             _ => {
                 let offset = self.stack_frame.get_stack_offset(value);
-                let addr: String = self.build_stk_addr_str(offset, "t0")?;
+                let addr: String = self.build_stk_addr_str(offset, tmp_reg)?;
                 self.gen.writer.write_inst("lw", &[reg, &addr])
             }
         }
@@ -443,14 +443,14 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
     /// Save a value (global or local) from a register.
     /// If the value is global, load its address using `la` and store.
     /// If the value is local, store it to the stack frame.
-    fn save_value_from_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
+    fn save_value_from_reg(&mut self, value: Value, reg: &str, tmp_reg: &str) -> io::Result<()> {
         if value.is_global() {
             let global_name = self.gen.get_global_value_name(value);
-            self.gen.writer.write_inst("la", &["t0", &global_name])?;
-            return self.gen.writer.write_inst("sw", &[reg, "0(t0)"]);
+            self.gen.writer.write_inst("la", &[tmp_reg, &global_name])?;
+            return self.gen.writer.write_inst("sw", &[reg, &format!("0({})", tmp_reg)]);
         }
         let offset = self.stack_frame.get_stack_offset(value);
-        let addr: String = self.build_stk_addr_str(offset, "t0")?;
+        let addr: String = self.build_stk_addr_str(offset, tmp_reg)?;
         self.gen.writer.write_inst("sw", &[reg, &addr])
     }
 
