@@ -222,11 +222,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             ValueKind::GetElemPtr(gep) => {
                 let src = gep.src();
                 let index = gep.index();
-                let src_type = if src.is_global() {
-                    self.gen.get_global_value_type(src)
-                } else {
-                    self.get_value_type(src)
-                };
+                let src_type = self.get_value_type(src);
                 let step = match src_type.kind() {
                     TypeKind::Pointer(base) => match base.kind() {
                         TypeKind::Array(elem, _) => elem.size(),
@@ -240,11 +236,7 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             ValueKind::GetPtr(gp) => {
                 let src = gp.src();
                 let index = gp.index();
-                let src_type = if src.is_global() {
-                    self.gen.get_global_value_type(src)
-                } else {
-                    self.get_value_type(src)
-                };
+                let src_type = self.get_value_type(src);
 
                 let step = match src_type.kind() {
                     TypeKind::Pointer(base) => base.size(),
@@ -254,17 +246,13 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
             }
 
             ValueKind::Store(store) => {
-                let store_value = store.value();
-                let dest = store.dest();
-
-                self.load_value_to_reg(store_value, "t0")?;
-                self.load_value_to_reg(dest, "t1")?;
+                self.load_value_to_reg(store.value(), "t0")?;
+                self.load_value_to_reg(store.dest(), "t1")?;
                 self.gen.writer.write_inst("sw", &["t0", "0(t1)"])?;
             }
 
             ValueKind::Load(load) => {
-                let src = load.src();
-                self.load_value_to_reg(src, "t0")?;
+                self.load_value_to_reg(load.src(), "t0")?;
                 self.gen.writer.write_inst("lw", &["t0", "0(t0)"])?;
                 self.save_value_from_reg(value, "t0")?;
             }
@@ -391,15 +379,18 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         self.gen.writer.write_inst("lw", &["ra", &addr])
     }
 
-    /// Load a value (global or local) into a register
+    /// Load a value (global or local) into a register.
+    /// If the value is global, load its address using `la`.
+    /// If the value is local, load it from the stack frame:
+    ///   - For integer constants, use `li` (or `mv` from x0 for zero).
+    ///   - For function arguments, load from `a0`-`a7` or from the stack if beyond 8 args.
+    ///   - For allocated variables, compute the address from `sp` and load.
+    ///   - For other values, they should be results of other instructions and already stored on the stack.
+    ///     Load them from the stack.
     fn load_value_to_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
         if value.is_global() {
             let global_name = self.gen.get_global_value_name(value);
             return self.gen.writer.write_inst("la", &[reg, &global_name]);
-            // return self
-            //     .gen
-            //     .writer
-            //     .write_inst("lw", &[reg, &("0(".to_string() + reg + ")")]);
         }
         // Non-global values reside in the stack frame
         let kind = self.get_value_kind(value);
@@ -449,6 +440,9 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
         }
     }
 
+    /// Save a value (global or local) from a register.
+    /// If the value is global, load its address using `la` and store.
+    /// If the value is local, store it to the stack frame.
     fn save_value_from_reg(&mut self, value: Value, reg: &str) -> io::Result<()> {
         if value.is_global() {
             let global_name = self.gen.get_global_value_name(value);
@@ -461,11 +455,19 @@ impl<'a, 'b, W: Write> FunctionGenerator<'a, 'b, W> {
     }
 
     fn get_value_kind(&self, value: Value) -> ValueKind {
-        self.func.dfg().value(value).kind().clone()
+        if value.is_global() {
+            self.gen.get_global_value_kind(value)
+        } else {
+            self.func.dfg().value(value).kind().clone()
+        }
     }
 
     fn get_value_type(&self, value: Value) -> Type {
-        self.func.dfg().value(value).ty().clone()
+        if value.is_global() {
+            self.gen.get_global_value_type(value)
+        } else {
+            self.func.dfg().value(value).ty().clone()
+        }
     }
 
     fn get_bb_name(&self, bb: BasicBlock) -> String {
