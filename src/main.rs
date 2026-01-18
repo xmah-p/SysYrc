@@ -46,7 +46,7 @@ fn main() -> Result<()> {
             backend::emit_riscv(&koopa_ir, writer)?;
         }
         "-perf" => {
-            panic!("Perf backend not implemented yet");
+            backend::emit_riscv(&koopa_ir, writer)?;
         }
         _ => panic!("Unknown mode: {}", mode),
     };
