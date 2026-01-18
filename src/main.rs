@@ -10,7 +10,6 @@ pub mod backend;
 lalrpop_mod!(sysy);  
 
 // Cmdline example: sysyrc <mode> <input> -o <output>
-// No error handling yet for simplicity
 fn parse_cmdline() -> (String, String, String) {
     let mut args = args();
     args.next();

@@ -29,8 +29,6 @@ impl StackFrame {
     /// 10th argument
     /// 9th argument
     /// Stack frame for Next function
-    /// 
-    /// [TODO] Correct I think.
     pub fn initialize(&mut self, func: &FunctionData) {
         self.values_map.clear();
 
